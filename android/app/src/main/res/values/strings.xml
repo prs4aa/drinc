@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">drink</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="btn_start">Start Service</string>
+    <string name="btn_stop">Stop Service</string>
+    <string name="server_address">Server: 192.168.1.149:33110</string>
+</resources>
