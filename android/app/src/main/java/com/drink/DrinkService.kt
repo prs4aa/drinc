@@ -17,6 +17,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.ImageReader
 import android.media.MediaRecorder
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -49,8 +51,10 @@ class DrinkService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var socketManager: SocketManager? = null
     private var micJob: Job? = null
+    private var reconnectJob: Job? = null
     private var running = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -61,15 +65,19 @@ class DrinkService : Service() {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "drink:lock").apply {
             runCatching { acquire() }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIF_ID,
-                buildNotification(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            )
-        } else {
-            startForeground(NOTIF_ID, buildNotification())
+        applyForegroundMode(0)
+
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                triggerReconnect()
+            }
+            override fun onLost(network: Network) {
+                runCatching { socketManager?.close() }
+            }
         }
+        networkCallback = callback
+        runCatching { cm.registerDefaultNetworkCallback(callback) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -83,10 +91,33 @@ class DrinkService : Service() {
     override fun onDestroy() {
         running = false
         micJob?.cancel()
+        reconnectJob?.cancel()
         socketManager?.close()
+        runCatching {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            networkCallback?.let { cm.unregisterNetworkCallback(it) }
+        }
         scope.cancel()
         runCatching { wakeLock?.release() }
         super.onDestroy()
+    }
+
+    private fun triggerReconnect() {
+        reconnectJob?.cancel()
+    }
+
+    private fun applyForegroundMode(extraType: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            if (extraType != 0) {
+                type = type or extraType
+            }
+            runCatching {
+                startForeground(NOTIF_ID, buildNotification(), type)
+            }
+        } else {
+            startForeground(NOTIF_ID, buildNotification())
+        }
     }
 
     private suspend fun connectionLoop() {
@@ -105,7 +136,15 @@ class DrinkService : Service() {
                 micJob = null
                 broadcastStatus(false)
             }
-            if (running) delay(RECONNECT_DELAY)
+            if (running) {
+                try {
+                    coroutineScope {
+                        reconnectJob = launch { delay(RECONNECT_DELAY) }
+                        reconnectJob?.join()
+                    }
+                } catch (e: CancellationException) {
+                }
+            }
         }
     }
 
@@ -138,6 +177,7 @@ class DrinkService : Service() {
                 sm.sendFrame(errorHeader)
                 return@launch
             }
+            applyForegroundMode(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             val bufferSize = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
@@ -175,6 +215,7 @@ class DrinkService : Service() {
                     recorder.stop()
                     recorder.release()
                 }
+                applyForegroundMode(0)
             }
         }
     }
@@ -343,48 +384,66 @@ class DrinkService : Service() {
                 sm.sendFrame(err)
                 return
             }
+            applyForegroundMode(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
+
             val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
             val characteristics = cameraManager.getCameraCharacteristics(camId)
+            val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
-            val width = jpegSizes?.firstOrNull()?.width ?: 1280
-            val height = jpegSizes?.firstOrNull()?.height ?: 720
+            val targetSize = jpegSizes?.filter { it.width in 640..1920 }?.maxByOrNull { it.width } ?: jpegSizes?.firstOrNull()
+            val width = targetSize?.width ?: 1280
+            val height = targetSize?.height ?: 720
 
-            val imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2)
+            val imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 3)
             val thread = HandlerThread("CameraCaptureThread").apply { start() }
             val handler = Handler(thread.looper)
 
             var cameraDevice: CameraDevice? = null
             var session: CameraCaptureSession? = null
+            var framesReceived = 0
+            var captured = false
 
             val cleanup = {
+                runCatching { session?.stopRepeating() }
                 runCatching { session?.close() }
                 runCatching { cameraDevice?.close() }
                 runCatching { imageReader.close() }
                 runCatching { thread.quitSafely() }
+                applyForegroundMode(0)
             }
 
             imageReader.setOnImageAvailableListener({ reader ->
                 val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                try {
-                    val buffer = image.planes[0].buffer
-                    val bytes = ByteArray(buffer.remaining())
-                    buffer.get(bytes)
-                    val header = JSONObject().apply {
-                        put("type", "camera_capture")
-                        put("cam_id", camId)
-                        put("size", bytes.size)
-                    }
-                    sm.sendFrame(header, bytes)
-                } catch (e: Exception) {
-                    val err = JSONObject().apply {
-                        put("type", "error")
-                        put("message", e.message ?: "Failed to process photo")
-                    }
-                    sm.sendFrame(err)
-                } finally {
+                framesReceived++
+                if (framesReceived < 8 && !captured) {
                     image.close()
-                    cleanup()
+                    return@setOnImageAvailableListener
+                }
+                if (!captured) {
+                    captured = true
+                    try {
+                        val buffer = image.planes[0].buffer
+                        val bytes = ByteArray(buffer.remaining())
+                        buffer.get(bytes)
+                        val header = JSONObject().apply {
+                            put("type", "camera_capture")
+                            put("cam_id", camId)
+                            put("size", bytes.size)
+                        }
+                        sm.sendFrame(header, bytes)
+                    } catch (e: Exception) {
+                        val err = JSONObject().apply {
+                            put("type", "error")
+                            put("message", e.message ?: "Failed to process photo")
+                        }
+                        sm.sendFrame(err)
+                    } finally {
+                        image.close()
+                        cleanup()
+                    }
+                } else {
+                    image.close()
                 }
             }, handler)
 
@@ -400,9 +459,18 @@ class DrinkService : Service() {
                                 try {
                                     val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
                                         addTarget(surface)
+                                        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                                        set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                                        set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+                                        set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
                                     }
-                                    captureSession.capture(requestBuilder.build(), null, handler)
+                                    captureSession.setRepeatingRequest(requestBuilder.build(), null, handler)
+                                    handler.postDelayed({
+                                        if (!captured) {
+                                            framesReceived = 8
+                                        }
+                                    }, 1200)
                                 } catch (e: Exception) {
                                     cleanup()
                                     val err = JSONObject().apply {

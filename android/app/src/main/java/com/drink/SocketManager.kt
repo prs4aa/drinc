@@ -9,7 +9,10 @@ import java.net.Socket
 class SocketManager(host: String, port: Int, timeoutMs: Int = 10000) {
 
     private val socket = Socket().apply {
+        tcpNoDelay = true
+        keepAlive = true
         connect(InetSocketAddress(host, port), timeoutMs)
+        soTimeout = 30000
     }
     private val input = DataInputStream(socket.getInputStream())
     private val output = DataOutputStream(socket.getOutputStream())

