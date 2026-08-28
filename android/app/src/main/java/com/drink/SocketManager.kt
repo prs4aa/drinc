@@ -3,14 +3,18 @@ package com.drink
 import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.net.InetSocketAddress
 import java.net.Socket
 
-class SocketManager(host: String, port: Int) {
+class SocketManager(host: String, port: Int, timeoutMs: Int = 10000) {
 
-    private val socket = Socket(host, port)
+    private val socket = Socket().apply {
+        connect(InetSocketAddress(host, port), timeoutMs)
+    }
     private val input = DataInputStream(socket.getInputStream())
     private val output = DataOutputStream(socket.getOutputStream())
 
+    @Synchronized
     fun sendFrame(json: JSONObject) {
         val bytes = json.toString().toByteArray(Charsets.UTF_8)
         output.writeInt(bytes.size)
@@ -18,6 +22,7 @@ class SocketManager(host: String, port: Int) {
         output.flush()
     }
 
+    @Synchronized
     fun sendFrame(header: JSONObject, body: ByteArray) {
         val headerBytes = header.toString().toByteArray(Charsets.UTF_8)
         output.writeInt(headerBytes.size)
