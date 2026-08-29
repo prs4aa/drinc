@@ -41,6 +41,7 @@ async def api_status() -> Dict[str, Any]:
         "mic_active": state.mic_active,
         "tcp_host": settings.tcp_host,
         "tcp_port": settings.tcp_port,
+        "web_port": settings.web_port,
         "camera_enabled": settings.enable_camera,
         "cameras": state.cameras if settings.enable_camera else [],
         "has_photo": state.latest_photo_bytes is not None if settings.enable_camera else False,
@@ -217,8 +218,12 @@ async def ws_audio(websocket: WebSocket) -> None:
     add_audio_client(websocket)
     try:
         while True:
-            await websocket.receive_bytes()
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
     except WebSocketDisconnect:
+        pass
+    except Exception:
         pass
     finally:
         remove_audio_client(websocket)

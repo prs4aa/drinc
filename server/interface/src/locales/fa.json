@@ -63,7 +63,8 @@
     "start_intercept": "شروع شنود زنده",
     "stop_intercept": "توقف شنود",
     "mute_browser": "بی‌صدا کردن مرورگر",
-    "monitor_browser": "پخش صدا در مرورگر"
+    "monitor_browser": "پخش صدا در مرورگر",
+    "gain": "تقویت‌کننده صدا"
   },
   "sms": {
     "title": "پیامک‌ها",

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { startMic, stopMic } from "../api/client";
 import { useTranslation } from "../context/LanguageContext";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
@@ -10,9 +10,16 @@ export default function MicControl({ status, onRefresh }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [listeningAudio, setListeningAudio] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [gainMultiplier, setGainMultiplier] = useState(2.0);
+
   const audioCtxRef = useRef(null);
+  const gainNodeRef = useRef(null);
   const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const candidateIndexRef = useRef(0);
+  const userWantsAudioRef = useRef(false);
   const nextPlayTimeRef = useRef(0);
   const canvasRef = useRef(null);
   const audioLevelRef = useRef(0);
@@ -21,9 +28,40 @@ export default function MicControl({ status, onRefresh }) {
 
   const isTransmitting = !!status?.mic_active;
 
-  const stopAudioListening = () => {
+  const ensureAudioContext = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return null;
+
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+        const ctx = new AudioCtx({ sampleRate: 16000 });
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = gainMultiplier;
+        gainNode.connect(ctx.destination);
+        audioCtxRef.current = ctx;
+        gainNodeRef.current = gainNode;
+        nextPlayTimeRef.current = ctx.currentTime;
+      }
+
+      if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+
+      return audioCtxRef.current;
+    } catch (e) {
+      return null;
+    }
+  }, [gainMultiplier]);
+
+  const stopAudioListening = useCallback(() => {
+    userWantsAudioRef.current = false;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     if (wsRef.current) {
       try {
+        wsRef.current.onopen = null;
         wsRef.current.onmessage = null;
         wsRef.current.onerror = null;
         wsRef.current.onclose = null;
@@ -36,27 +74,67 @@ export default function MicControl({ status, onRefresh }) {
         audioCtxRef.current.close();
       } catch (e) {}
       audioCtxRef.current = null;
+      gainNodeRef.current = null;
     }
     nextPlayTimeRef.current = 0;
     setListeningAudio(false);
+    setWsConnected(false);
     audioLevelRef.current = 0;
-  };
+  }, []);
 
-  const startAudioListening = () => {
-    stopAudioListening();
+  const getWsUrls = useCallback(() => {
+    if (import.meta.env.VITE_WS_URL) {
+      return [import.meta.env.VITE_WS_URL];
+    }
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const hostname = window.location.hostname || "127.0.0.1";
+    const host = window.location.host;
+    const serverPort = status?.web_port || 3000;
+    const isDevPort = window.location.port === "5173";
+
+    const urls = [];
+    if (isDevPort) {
+      urls.push(`${protocol}//${hostname}:${serverPort}/ws/audio`);
+      urls.push(`${protocol}//${host}/ws/audio`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/api/ws/audio`);
+      urls.push(`${protocol}//${host}/api/ws/audio`);
+    } else {
+      urls.push(`${protocol}//${host}/ws/audio`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/ws/audio`);
+      urls.push(`${protocol}//${host}/api/ws/audio`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/api/ws/audio`);
+    }
+    return [...new Set(urls)];
+  }, [status?.web_port]);
+
+  const connectWs = useCallback(() => {
+    if (!userWantsAudioRef.current) return;
+    const urls = getWsUrls();
+    if (urls.length === 0) return;
+
+    if (candidateIndexRef.current >= urls.length) {
+      candidateIndexRef.current = 0;
+    }
+    const currentUrl = urls[candidateIndexRef.current];
+
+    if (wsRef.current) {
+      try {
+        wsRef.current.onopen = null;
+        wsRef.current.onmessage = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+      } catch (e) {}
+      wsRef.current = null;
+    }
+
     try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx({ sampleRate: 16000 });
-      audioCtxRef.current = ctx;
-      nextPlayTimeRef.current = ctx.currentTime;
-
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws/audio`;
-
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(currentUrl);
       ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        setWsConnected(true);
+      };
 
       ws.onmessage = (event) => {
         if (!(event.data instanceof ArrayBuffer)) return;
@@ -74,44 +152,93 @@ export default function MicControl({ status, onRefresh }) {
         const targetLevel = Math.min(1, avg / 8000);
         audioLevelRef.current = audioLevelRef.current * 0.3 + targetLevel * 0.7;
 
-        if (audioCtxRef.current) {
-          const currentCtx = audioCtxRef.current;
-          const float32 = new Float32Array(int16.length);
-          for (let i = 0; i < int16.length; i++) {
-            float32[i] = int16[i] / 32768.0;
-          }
+        const ctx = ensureAudioContext();
+        if (!ctx) return;
 
-          const buffer = currentCtx.createBuffer(1, float32.length, 16000);
-          buffer.copyToChannel(float32, 0);
-
-          const source = currentCtx.createBufferSource();
-          source.buffer = buffer;
-          source.connect(currentCtx.destination);
-          source.onended = () => {
-            try {
-              source.disconnect();
-            } catch (err) {}
-          };
-
-          const startTime = Math.max(currentCtx.currentTime, nextPlayTimeRef.current);
-          source.start(startTime);
-          nextPlayTimeRef.current = startTime + buffer.duration;
+        if (ctx.state === "suspended") {
+          ctx.resume().catch(() => {});
         }
+
+        const float32 = new Float32Array(int16.length);
+        for (let i = 0; i < int16.length; i++) {
+          float32[i] = int16[i] / 32768.0;
+        }
+
+        const buffer = ctx.createBuffer(1, float32.length, 16000);
+        buffer.copyToChannel(float32, 0);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+
+        if (gainNodeRef.current) {
+          source.connect(gainNodeRef.current);
+        } else {
+          source.connect(ctx.destination);
+        }
+
+        source.onended = () => {
+          try {
+            source.disconnect();
+          } catch (err) {}
+        };
+
+        const now = ctx.currentTime;
+        if (nextPlayTimeRef.current < now || nextPlayTimeRef.current > now + 0.35) {
+          nextPlayTimeRef.current = now + 0.05;
+        }
+        source.start(nextPlayTimeRef.current);
+        nextPlayTimeRef.current += buffer.duration;
       };
 
       ws.onerror = () => {
-        stopAudioListening();
+        setWsConnected(false);
+        if (userWantsAudioRef.current) {
+          candidateIndexRef.current = (candidateIndexRef.current + 1) % urls.length;
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = setTimeout(() => {
+            connectWs();
+          }, 800);
+        }
       };
 
       ws.onclose = () => {
-        stopAudioListening();
+        setWsConnected(false);
+        if (userWantsAudioRef.current) {
+          candidateIndexRef.current = (candidateIndexRef.current + 1) % urls.length;
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = setTimeout(() => {
+            connectWs();
+          }, 1200);
+        }
       };
 
       wsRef.current = ws;
-      setListeningAudio(true);
     } catch (e) {
-      stopAudioListening();
+      if (userWantsAudioRef.current) {
+        candidateIndexRef.current = (candidateIndexRef.current + 1) % urls.length;
+        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = setTimeout(() => {
+          connectWs();
+        }, 1500);
+      }
     }
+  }, [ensureAudioContext, getWsUrls]);
+
+  const startAudioListening = useCallback(() => {
+    userWantsAudioRef.current = true;
+    candidateIndexRef.current = 0;
+    ensureAudioContext();
+    setListeningAudio(true);
+    connectWs();
+  }, [connectWs, ensureAudioContext]);
+
+  const handleGainChange = (newVal) => {
+    const val = parseFloat(newVal);
+    setGainMultiplier(val);
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = val;
+    }
+    ensureAudioContext();
   };
 
   useEffect(() => {
@@ -130,7 +257,7 @@ export default function MicControl({ status, onRefresh }) {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [status?.mic_active]);
+  }, [status?.mic_active, listeningAudio, stopAudioListening]);
 
   useEffect(() => {
     return () => {
@@ -139,7 +266,7 @@ export default function MicControl({ status, onRefresh }) {
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, []);
+  }, [stopAudioListening]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -158,7 +285,7 @@ export default function MicControl({ status, onRefresh }) {
 
       if (!isTransmitting) {
         ctx.beginPath();
-        ctx.strokeStyle = "rgba(16, 185, 129, 0.18)";
+        ctx.strokeStyle = "rgba(16, 185, 129, 0.25)";
         ctx.lineWidth = 1.5;
         ctx.shadowBlur = 0;
         ctx.moveTo(0, midY);
@@ -275,6 +402,7 @@ export default function MicControl({ status, onRefresh }) {
   const handleStart = async () => {
     setLoading(true);
     try {
+      ensureAudioContext();
       await startMic();
       startAudioListening();
       await onRefresh();
@@ -328,67 +456,88 @@ export default function MicControl({ status, onRefresh }) {
           </Badge>
 
           {isTransmitting && (
-            <Badge variant={listeningAudio ? "success" : "secondary"} className="text-[9px] px-1.5 py-0 font-mono">
-              {listeningAudio ? t("audio.audio_on") : t("audio.muted")}
+            <Badge variant={listeningAudio && wsConnected ? "success" : "secondary"} className="text-[9px] px-1.5 py-0 font-mono">
+              {listeningAudio ? (wsConnected ? t("audio.audio_on") : "CONNECTING") : t("audio.muted")}
             </Badge>
           )}
         </div>
       </CardHeader>
 
       <CardContent className="p-3.5 space-y-3 flex-1 flex flex-col justify-between">
-        <div className="rounded-xl bg-input border border-border overflow-hidden">
-          <div className="p-3 pb-2 border-b border-border-muted/60 flex items-center justify-between">
-            <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  isTransmitting ? "bg-emerald-400 shadow-sm shadow-emerald-500/50" : "bg-zinc-600"
-                }`}
+        <div className="space-y-2">
+          <div className="rounded-xl bg-input border border-border overflow-hidden">
+            <div className="p-3 pb-2 border-b border-border-muted/60 flex items-center justify-between">
+              <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isTransmitting ? "bg-emerald-400 shadow-sm shadow-emerald-500/50" : "bg-zinc-600"
+                  }`}
+                />
+                <span className="text-[10px] uppercase font-mono tracking-wider text-dim">
+                  {isTransmitting ? t("audio.active_stream") : t("audio.recorder_standby")}
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-2 rtl:space-x-reverse">
+                <span className="text-[10px] font-mono text-dim">
+                  {t("audio.pcm_spec")}
+                </span>
+                <span
+                  className={`font-mono text-xs font-bold px-1.5 py-0.5 rounded border ${
+                    isTransmitting
+                      ? "bg-emerald-950/40 border-emerald-500/30 text-emerald-400"
+                      : "bg-surface border-border text-dim"
+                  }`}
+                >
+                  {formatTimer(elapsedSeconds)}
+                </span>
+              </div>
+            </div>
+
+            <div className="relative p-2 px-3 bg-[#05080c] flex flex-col justify-center items-center h-20">
+              <div className="absolute inset-0 flex flex-col justify-between p-2 pointer-events-none opacity-20">
+                <div className="w-full border-b border-dashed border-emerald-900/60" />
+                <div className="w-full border-b border-dashed border-emerald-900/60" />
+                <div className="w-full border-b border-dashed border-emerald-900/60" />
+              </div>
+
+              <canvas
+                ref={canvasRef}
+                className="w-full h-full relative z-10 block"
+                style={{ width: "100%", height: "100%" }}
               />
-              <span className="text-[10px] uppercase font-mono tracking-wider text-dim">
-                {isTransmitting ? t("audio.active_stream") : t("audio.recorder_standby")}
-              </span>
             </div>
 
+            <div className="p-2 px-3 bg-surface/50 border-t border-border-muted/60 flex items-center justify-between text-[10px] font-mono text-dim">
+              <div className="flex items-center space-x-1 rtl:space-x-reverse">
+                <Activity className={`w-3 h-3 ${isTransmitting ? "text-emerald-400" : "text-zinc-600"}`} />
+                <span>{isTransmitting ? "STREAM: ACTIVE (16kHz)" : "SIGNAL: IDLE"}</span>
+              </div>
+              <span>CH: MONO</span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-surface border border-border text-[11px] font-mono">
+            <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-dim">
+              <Volume2 className="w-3.5 h-3.5 text-accent" />
+              <span>{t("audio.gain")}</span>
+            </div>
             <div className="flex items-center space-x-2 rtl:space-x-reverse">
-              <span className="text-[10px] font-mono text-dim">
-                {t("audio.pcm_spec")}
-              </span>
-              <span
-                className={`font-mono text-xs font-bold px-1.5 py-0.5 rounded border ${
-                  isTransmitting
-                    ? "bg-emerald-950/40 border-emerald-500/30 text-emerald-400"
-                    : "bg-surface border-border text-dim"
-                }`}
-              >
-                {formatTimer(elapsedSeconds)}
-              </span>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="0.5"
+                value={gainMultiplier}
+                onChange={(e) => handleGainChange(e.target.value)}
+                className="w-20 h-1.5 bg-input rounded-lg appearance-none cursor-pointer accent-accent"
+              />
+              <span className="font-semibold text-main w-8 text-right rtl:text-left">{gainMultiplier.toFixed(1)}x</span>
             </div>
-          </div>
-
-          <div className="relative p-2 px-3 bg-[#05080c] flex flex-col justify-center items-center h-20">
-            <div className="absolute inset-0 flex flex-col justify-between p-2 pointer-events-none opacity-20">
-              <div className="w-full border-b border-dashed border-emerald-900/60" />
-              <div className="w-full border-b border-dashed border-emerald-900/60" />
-              <div className="w-full border-b border-dashed border-emerald-900/60" />
-            </div>
-
-            <canvas
-              ref={canvasRef}
-              className="w-full h-full relative z-10 block"
-              style={{ width: "100%", height: "100%" }}
-            />
-          </div>
-
-          <div className="p-2 px-3 bg-surface/50 border-t border-border-muted/60 flex items-center justify-between text-[10px] font-mono text-dim">
-            <div className="flex items-center space-x-1 rtl:space-x-reverse">
-              <Activity className={`w-3 h-3 ${isTransmitting ? "text-emerald-400" : "text-zinc-600"}`} />
-              <span>{isTransmitting ? "STREAM: ACTIVE (16kHz)" : "SIGNAL: IDLE"}</span>
-            </div>
-            <span>CH: MONO</span>
           </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 pt-1">
           {!isTransmitting ? (
             <Button
               variant="default"

@@ -46,8 +46,8 @@ async def reader_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             if msg_type == "mic_chunk":
                 try:
                     audio_data = await recv_frame(reader)
-                    if state.mic_active:
-                        await broadcast_audio(audio_data)
+                    state.mic_active = True
+                    await broadcast_audio(audio_data)
                 except Exception as e:
                     log_warn(f"mic frame read interrupted: {e}")
                     break

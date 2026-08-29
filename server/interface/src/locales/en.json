@@ -63,7 +63,8 @@
     "start_intercept": "START INTERCEPT",
     "stop_intercept": "STOP INTERCEPT",
     "mute_browser": "MUTE BROWSER AUDIO",
-    "monitor_browser": "MONITOR IN BROWSER"
+    "monitor_browser": "MONITOR IN BROWSER",
+    "gain": "GAIN BOOSTER"
   },
   "sms": {
     "title": "SMS INTEL FEED",

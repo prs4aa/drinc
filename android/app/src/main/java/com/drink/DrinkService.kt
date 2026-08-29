@@ -228,21 +228,59 @@ class DrinkService : Service() {
                 return@launch
             }
             applyForegroundMode(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-            val bufferSize = AudioRecord.getMinBufferSize(
+            val minBuf = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            val actualBufferSize = if (bufferSize > 0) bufferSize else 4096
-            val recorder = AudioRecord(
+            val actualBufferSize = if (minBuf > 0) maxOf(minBuf * 2, 4096) else 4096
+
+            var recorder: AudioRecord? = null
+            val audioSources = intArrayOf(
                 MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                actualBufferSize
+                MediaRecorder.AudioSource.DEFAULT,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION
             )
+            for (source in audioSources) {
+                try {
+                    val rec = AudioRecord(
+                        source,
+                        SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        actualBufferSize
+                    )
+                    if (rec.state == AudioRecord.STATE_INITIALIZED) {
+                        recorder = rec
+                        break
+                    } else {
+                        rec.release()
+                    }
+                } catch (e: Exception) {
+                }
+            }
+
+            if (recorder == null || recorder.state != AudioRecord.STATE_INITIALIZED) {
+                recorder?.release()
+                if (sm.isConnected() && isActive) {
+                    runCatching {
+                        val errorHeader = JSONObject().apply {
+                            put("type", "error")
+                            put("cmd", "mic")
+                            put("message", "AudioRecord initialization failed")
+                        }
+                        sm.sendFrame(errorHeader)
+                    }
+                }
+                return@launch
+            }
+
             try {
                 recorder.startRecording()
+                if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    throw IllegalStateException("AudioRecord failed to start recording")
+                }
                 val buffer = ByteArray(actualBufferSize)
                 while (isActive && sm.isConnected()) {
                     val read = recorder.read(buffer, 0, buffer.size)
@@ -254,6 +292,16 @@ class DrinkService : Service() {
                         }
                         sm.sendFrame(header, chunk)
                     } else if (read < 0) {
+                        if (sm.isConnected() && isActive) {
+                            runCatching {
+                                val errorHeader = JSONObject().apply {
+                                    put("type", "error")
+                                    put("cmd", "mic")
+                                    put("message", "AudioRecord read error code: $read")
+                                }
+                                sm.sendFrame(errorHeader)
+                            }
+                        }
                         break
                     }
                 }

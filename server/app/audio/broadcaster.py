@@ -13,10 +13,13 @@ def remove_audio_client(ws: WebSocket) -> None:
 
 
 async def broadcast_audio(chunk: bytes) -> None:
+    if not chunk or not audio_clients:
+        return
     dead = set()
     for ws in list(audio_clients):
         try:
             await ws.send_bytes(chunk)
         except Exception:
             dead.add(ws)
-    audio_clients.difference_update(dead)
+    if dead:
+        audio_clients.difference_update(dead)
