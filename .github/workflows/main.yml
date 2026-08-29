@@ -24,15 +24,19 @@
 
           - name: Set up Gradle
             uses: gradle/actions/setup-gradle@v4
-            with:
-              gradle-version: '8.4'
+
+          - name: Ensure libv2ray AAR
+            run: |
+              mkdir -p android/app/libs
+              if [ ! -f android/app/libs/libv2ray.aar ] || [ $(wc -c < android/app/libs/libv2ray.aar) -lt 1000000 ]; then
+                curl -sL -H "Accept: application/octet-stream" https://api.github.com/repos/2dust/AndroidLibXrayLite/releases/assets/521906816 -o android/app/libs/libv2ray.aar || \
+                curl -L -f -o android/app/libs/libv2ray.aar https://github.com/2dust/AndroidLibXrayLite/releases/download/v26.8.20/libv2ray.aar
+              fi
+              ls -lh android/app/libs/
 
           - name: Build Android Debug APK
             working-directory: android
             run: |
-              if [ ! -f "gradlew" ]; then
-                gradle wrapper
-              fi
               chmod +x gradlew
               ./gradlew assembleDebug
 
@@ -40,4 +44,4 @@
             uses: actions/upload-artifact@v4
             with:
               name: app-debug
-              path: android/app/build/outputs/apk/debug/*.apk
+              path: android/app/build/outputs/apk/*/*/*.apk
