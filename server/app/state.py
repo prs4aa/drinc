@@ -22,6 +22,7 @@ class AppState:
         self.latest_contacts: Optional[str] = None
         self.latest_contacts_bytes: Optional[bytes] = None
         self.latest_sms: List[Dict[str, Any]] = []
+        self.latest_call_logs: List[Dict[str, Any]] = []
         self.contacts_list: List[Dict[str, Any]] = []
         self.latest_telemetry: Optional[Dict[str, Any]] = None
         self.disconnect_event: asyncio.Event = asyncio.Event()
@@ -29,6 +30,7 @@ class AppState:
 
     def load_persisted_state(self) -> None:
         try:
+            settings.storage_dir.mkdir(parents=True, exist_ok=True)
             telemetry_path = settings.storage_dir / "latest_telemetry.json"
             if telemetry_path.exists():
                 self.latest_telemetry = json.loads(telemetry_path.read_text(encoding="utf-8"))
@@ -43,6 +45,13 @@ class AppState:
             pass
 
         try:
+            calls_path = settings.storage_dir / "latest_call_logs.json"
+            if calls_path.exists():
+                self.latest_call_logs = json.loads(calls_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+        try:
             contacts_path = settings.storage_dir / "contacts.zip"
             if contacts_path.exists():
                 data = contacts_path.read_bytes()
@@ -53,6 +62,34 @@ class AppState:
                         if "contacts.json" in zf.namelist():
                             with zf.open("contacts.json") as f:
                                 self.contacts_list = json.loads(f.read().decode("utf-8"))
+        except Exception:
+            pass
+
+        try:
+            photos = sorted(settings.storage_dir.glob("photo_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if photos:
+                self.latest_photo = str(photos[0])
+                self.latest_photo_bytes = photos[0].read_bytes()
+        except Exception:
+            pass
+
+    def clear_all_data(self) -> None:
+        self.latest_sms = []
+        self.latest_call_logs = []
+        self.contacts_list = []
+        self.latest_contacts = None
+        self.latest_contacts_bytes = None
+        self.latest_telemetry = None
+        self.latest_photo = None
+        self.latest_photo_bytes = None
+        try:
+            if settings.storage_dir.exists():
+                for filename in ["contacts.zip", "latest_sms.json", "latest_call_logs.json", "latest_telemetry.json"]:
+                    target = settings.storage_dir / filename
+                    if target.exists():
+                        target.unlink(missing_ok=True)
+                for photo in settings.storage_dir.glob("photo_*.jpg"):
+                    photo.unlink(missing_ok=True)
         except Exception:
             pass
 

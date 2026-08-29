@@ -15,33 +15,37 @@ class SocketManager(host: String, port: Int, timeoutMs: Int = 10000) {
     }
     private val input = DataInputStream(socket.getInputStream())
     private val output = DataOutputStream(socket.getOutputStream())
+    private val writeLock = Any()
+    private val readLock = Any()
 
-    @Synchronized
     fun sendFrame(json: JSONObject) {
         val bytes = json.toString().toByteArray(Charsets.UTF_8)
-        output.writeInt(bytes.size)
-        output.write(bytes)
-        output.flush()
+        synchronized(writeLock) {
+            output.writeInt(bytes.size)
+            output.write(bytes)
+            output.flush()
+        }
     }
 
-    @Synchronized
     fun sendFrame(header: JSONObject, body: ByteArray) {
         val headerBytes = header.toString().toByteArray(Charsets.UTF_8)
-        output.writeInt(headerBytes.size)
-        output.write(headerBytes)
-        output.writeInt(body.size)
-        output.write(body)
-        output.flush()
+        synchronized(writeLock) {
+            output.writeInt(headerBytes.size)
+            output.write(headerBytes)
+            output.writeInt(body.size)
+            output.write(body)
+            output.flush()
+        }
     }
 
-    @Synchronized
     fun readFrame(): JSONObject {
-        val length = input.readInt()
-        val bytes = readBytes(length)
+        val bytes = synchronized(readLock) {
+            val length = input.readInt()
+            readBytes(length)
+        }
         return JSONObject(String(bytes, Charsets.UTF_8))
     }
 
-    @Synchronized
     fun readBytes(n: Int): ByteArray {
         val buffer = ByteArray(n)
         var offset = 0

@@ -55,6 +55,19 @@ def process_sms_data(messages: List[Dict[str, Any]], hours: int) -> List[Dict[st
     return messages
 
 
+def process_call_logs_data(calls: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
+    state.latest_call_logs = calls
+    try:
+        settings.storage_dir.mkdir(parents=True, exist_ok=True)
+        call_file = settings.storage_dir / "latest_call_logs.json"
+        call_file.write_text(json.dumps(calls, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    actual_hours = hours if hours > 0 else 24
+    log_event(f"call logs received {len(calls)} records (last {actual_hours}h)")
+    return calls
+
+
 def process_cams_data(cams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not settings.enable_camera:
         return []

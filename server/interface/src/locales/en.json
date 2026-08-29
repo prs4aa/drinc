@@ -117,5 +117,43 @@
     "search_placeholder": "Search logs...",
     "clear": "Clear",
     "no_logs": "No console logs recorded."
+  },
+  "call_logs": {
+    "title": "CALL REGISTRY",
+    "fetch": "FETCH",
+    "expand": "EXPAND",
+    "hours": "Hours",
+    "search_placeholder": "Search name or phone number...",
+    "no_records": "No call logs stored.",
+    "no_matching": "No matching call logs.",
+    "studio_title": "Call Registry Dossier & Telephony Inspector",
+    "studio_desc": "Chronological audit of endpoint telephony communications",
+    "export_json": "EXPORT JSON",
+    "incoming": "INCOMING CALL",
+    "outgoing": "OUTGOING CALL",
+    "missed": "MISSED CALL",
+    "rejected": "REJECTED CALL",
+    "duration": "Duration",
+    "timestamp": "Timestamp",
+    "number": "Phone Number",
+    "caller": "Caller Name",
+    "copy_number": "COPY NUMBER",
+    "copied": "COPIED",
+    "no_selected": "No call selected",
+    "no_selected_desc": "Select a call log entry from the list to view full telephony metadata."
+  },
+  "camera": {
+    "title": "CAMERA SNAPSHOT",
+    "detect": "DETECT",
+    "capture": "CAPTURE",
+    "download": "DOWNLOAD FULL RES",
+    "no_photo": "No camera snapshot captured yet.",
+    "cam_0": "Camera 0 (Back)",
+    "cam_1": "Camera 1 (Front)"
+  },
+  "clear_data": {
+    "button": "Clear Workspace Data",
+    "confirm": "Are you sure you want to clear all data (SMS, contacts, call logs, telemetry, and photos)?",
+    "cleared": "All data cleared"
   }
 }

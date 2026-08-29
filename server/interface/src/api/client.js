@@ -23,7 +23,10 @@ export const fetchSms = (hours = 24) => apiClient.post("/client/sms", { hours })
 export const getLatestSms = () => apiClient.get("/sms/latest");
 export const listCameras = () => apiClient.post("/client/cameras");
 export const captureCamera = (camId = "0") => apiClient.post("/client/camera/capture", { cam_id: camId });
+export const fetchCallLogs = (hours = 24) => apiClient.post("/client/call_logs", { hours });
+export const getLatestCallLogs = () => apiClient.get("/call_logs/latest");
 export const fetchTelemetry = () => apiClient.post("/client/telemetry");
 export const getTelemetry = () => apiClient.get("/client/telemetry");
+export const clearAllData = () => apiClient.post("/data/clear");
 
 export default apiClient;

