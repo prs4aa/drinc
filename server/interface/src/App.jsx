@@ -550,23 +550,15 @@ export default function App() {
           </Card>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
-          <div className="h-full space-y-4">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
             <MicControl status={status} onRefresh={refreshData} />
-            {status?.camera_enabled && (
-              <CameraManager status={status} onRefresh={refreshData} />
-            )}
+            <CameraManager status={status} onRefresh={refreshData} />
           </div>
 
-          <div className="h-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-stretch">
             <CallLogsManager status={status} onRefresh={refreshData} />
-          </div>
-
-          <div className="h-full">
             <SmsManager status={status} onRefresh={refreshData} />
-          </div>
-
-          <div className="h-full">
             <ContactsManager status={status} onRefresh={refreshData} />
           </div>
         </div>

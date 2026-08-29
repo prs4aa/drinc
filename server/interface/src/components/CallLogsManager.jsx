@@ -209,54 +209,8 @@ export default function CallLogsManager({ status, onRefresh }) {
 
         <CardContent className="p-3.5 space-y-3 flex-1 flex flex-col justify-between">
           <div className="space-y-2">
-            <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
-              <div className="flex-1 flex items-center bg-input border border-border rounded-md px-2 py-1">
-                <span className="text-[10px] font-mono text-dim mr-1 rtl:mr-0 rtl:ml-1">
-                  {t("call_logs.hours")}:
-                </span>
-                <input
-                  type="number"
-                  min="1"
-                  max="720"
-                  value={hours}
-                  onChange={(e) => setHours(e.target.value)}
-                  className="w-12 bg-transparent text-xs font-mono text-main outline-none"
-                />
-              </div>
-
-              <div className="flex items-center space-x-1 rtl:space-x-reverse">
-                {[12, 24, 72].map((h) => (
-                  <Button
-                    key={h}
-                    size="sm"
-                    variant={Number(hours) === h ? "secondary" : "ghost"}
-                    onClick={() => {
-                      setHours(h);
-                      handleFetch(h);
-                    }}
-                    className={`h-7 px-1.5 text-[10px] font-mono ${
-                      Number(hours) === h ? "bg-surface-elevated text-main font-semibold" : "text-dim"
-                    }`}
-                  >
-                    {h}h
-                  </Button>
-                ))}
-              </div>
-
-              <Button
-                size="sm"
-                variant="default"
-                disabled={loading || !status?.client_connected}
-                onClick={() => handleFetch(hours)}
-                className="h-7 px-2.5 text-xs font-mono font-medium bg-amber-600 hover:bg-amber-500 text-white"
-              >
-                <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
-                {t("call_logs.fetch")}
-              </Button>
-            </div>
-
             <div className="relative">
-              <Search className="w-3 h-3 absolute left-2 rtl:left-auto rtl:right-2 top-2 text-dim" />
+              <Search className="w-3 h-3 absolute left-2.5 rtl:left-auto rtl:right-2.5 top-2 text-dim" />
               <input
                 type="text"
                 value={searchTerm}
@@ -264,6 +218,56 @@ export default function CallLogsManager({ status, onRefresh }) {
                 placeholder={t("call_logs.search_placeholder")}
                 className="w-full bg-input border border-border rounded-md pl-7 rtl:pl-2 rtl:pr-7 pr-2 py-1 text-xs font-mono text-main placeholder:text-dim/60 outline-none"
               />
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
+              <div className="flex items-center space-x-1 rtl:space-x-reverse">
+                <div className="flex bg-input p-0.5 rounded-lg border border-border font-mono text-[10px]">
+                  {[12, 24, 72].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => {
+                        setHours(h);
+                        handleFetch(h);
+                      }}
+                      className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
+                        Number(hours) === h ? "bg-surface-elevated text-main font-semibold shadow-sm" : "text-dim hover:text-main"
+                      }`}
+                    >
+                      {h}h
+                    </button>
+                  ))}
+                </div>
+
+                <div className="relative flex items-center bg-input rounded-lg border border-border focus-within:border-amber-500/60 transition-colors">
+                  <input
+                    type="number"
+                    min="1"
+                    value={hours}
+                    onChange={(e) => setHours(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleFetch(Number(hours) || 24);
+                    }}
+                    className="w-14 pl-2 pr-5 py-1 bg-transparent text-main text-xs font-mono focus:outline-none text-right rtl:text-left rtl:pr-2 rtl:pl-5"
+                    placeholder="24"
+                  />
+                  <span className="absolute right-1.5 rtl:right-auto rtl:left-1.5 text-[10px] text-dim pointer-events-none font-mono select-none">
+                    h
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                size="sm"
+                variant="default"
+                disabled={loading || !status?.client_connected}
+                onClick={() => handleFetch(hours)}
+                className="h-7 px-2.5 text-xs font-mono font-medium bg-amber-600 hover:bg-amber-500 text-white whitespace-nowrap flex-shrink-0"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
+                {t("call_logs.fetch")}
+              </Button>
             </div>
           </div>
 

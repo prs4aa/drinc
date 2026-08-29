@@ -144,11 +144,10 @@ export default function ContactsManager({ status, onRefresh }) {
                 }
                 setIsModalOpen(true);
               }}
-              className="h-7 px-2 text-xs font-mono text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/20 border border-cyan-500/20"
+              className="h-7 w-7 p-0 text-cyan-400 hover:text-cyan-300 hover:bg-cyan-950/20 border border-cyan-500/20"
               title={t("contacts.expand")}
             >
-              <Maximize2 className="w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1" />
-              {t("contacts.expand")}
+              <Maximize2 className="w-3.5 h-3.5" />
             </Button>
           </div>
         </CardHeader>

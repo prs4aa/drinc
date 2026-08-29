@@ -36,8 +36,14 @@ export default function CameraManager({ status, onRefresh }) {
 
   const cams = status?.cameras || [];
 
+  React.useEffect(() => {
+    if (status?.client_connected && cams.length === 0) {
+      listCameras().then(onRefresh).catch(() => {});
+    }
+  }, [status?.client_connected, cams.length]);
+
   return (
-    <Card className="border-border bg-surface shadow-sm">
+    <Card className="border-border bg-surface shadow-sm h-full flex flex-col justify-between">
       <CardHeader className="p-3.5 pb-2.5 border-b border-border-muted flex flex-row items-center justify-between">
         <div className="flex items-center space-x-2 rtl:space-x-reverse">
           <div className="p-1.5 rounded-md bg-surface-elevated border border-border text-pink-400">
@@ -53,56 +59,58 @@ export default function CameraManager({ status, onRefresh }) {
           {cams.length > 0 ? `${cams.length} CAMS` : "STANDBY"}
         </Badge>
       </CardHeader>
-      <CardContent className="p-3.5 space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={loading || !status?.client_connected}
-            onClick={handleList}
-            className="h-7 text-xs font-mono"
-          >
-            <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
-            {t("camera.detect")}
-          </Button>
+      <CardContent className="p-3.5 space-y-3 flex-1 flex flex-col justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center space-x-2 rtl:space-x-reverse">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={loading || !status?.client_connected}
+              onClick={handleList}
+              className="h-7 text-xs font-mono"
+            >
+              <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
+              {t("camera.detect")}
+            </Button>
 
-          <select
-            value={selectedCam}
-            onChange={(e) => setSelectedCam(e.target.value)}
-            className="bg-input text-main border border-border rounded-md px-2 py-1 text-xs font-mono outline-none"
-          >
-            {cams.length > 0 ? (
-              cams.map((c, i) => {
-                const id = typeof c === "object" ? c.id || String(i) : String(c);
-                const name = typeof c === "object" ? c.facing || c.name || `Cam ${id}` : `Cam ${id}`;
-                return (
-                  <option key={id} value={id} className="bg-surface text-main">
-                    {name} ({id})
-                  </option>
-                );
-              })
-            ) : (
-              <>
-                <option value="0" className="bg-surface text-main">{t("camera.cam_0")}</option>
-                <option value="1" className="bg-surface text-main">{t("camera.cam_1")}</option>
-              </>
-            )}
-          </select>
+            <select
+              value={selectedCam}
+              onChange={(e) => setSelectedCam(e.target.value)}
+              className="bg-input text-main border border-border rounded-md px-2 py-1 text-xs font-mono outline-none"
+            >
+              {cams.length > 0 ? (
+                cams.map((c, i) => {
+                  const id = typeof c === "object" ? c.id || String(i) : String(c);
+                  const name = typeof c === "object" ? c.name || `Cam ${id}` : `Cam ${id}`;
+                  return (
+                    <option key={id} value={id} className="bg-surface text-main">
+                      {name}
+                    </option>
+                  );
+                })
+              ) : (
+                <>
+                  <option value="0" className="bg-surface text-main">{t("camera.cam_0")}</option>
+                  <option value="1" className="bg-surface text-main">{t("camera.cam_1")}</option>
+                </>
+              )}
+            </select>
+          </div>
 
           <Button
             size="sm"
             variant="default"
             disabled={loading || !status?.client_connected}
             onClick={handleCapture}
-            className="h-7 px-3 text-xs font-mono font-medium bg-pink-600 hover:bg-pink-500 text-white"
+            className="h-7 px-3 text-xs font-mono font-medium bg-pink-600 hover:bg-pink-500 text-white whitespace-nowrap flex-shrink-0"
           >
-            <Camera className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
+            <Camera className={`w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5 ${loading ? "animate-spin" : ""}`} />
             {t("camera.capture")}
           </Button>
         </div>
 
         {status?.has_photo ? (
-          <div className="space-y-2 pt-1">
+          <div className="space-y-2 pt-1 flex-1 flex flex-col justify-end">
             <div className="flex items-center justify-between text-[11px] font-mono text-dim">
               <span className="text-emerald-400">SNAPSHOT READY</span>
               <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
@@ -129,18 +137,19 @@ export default function CameraManager({ status, onRefresh }) {
 
             <div
               onClick={() => setPreviewOpen(true)}
-              className="rounded-xl overflow-hidden border border-border bg-input relative cursor-pointer group"
+              className="rounded-xl overflow-hidden border border-border bg-[#05080c] relative cursor-pointer group h-40 flex items-center justify-center"
             >
               <img
                 src={`/api/photo/latest?t=${photoTimestamp}`}
                 alt="Latest capture"
-                className="max-h-[220px] w-full object-contain mx-auto transition-transform duration-200 group-hover:scale-[1.01]"
+                className="max-h-40 w-full object-contain mx-auto transition-transform duration-200 group-hover:scale-[1.01]"
               />
             </div>
           </div>
         ) : (
-          <div className="p-4 rounded-xl bg-input border border-border text-center text-xs font-mono text-dim">
-            {t("camera.no_photo")}
+          <div className="h-40 rounded-xl bg-input border border-border flex flex-col items-center justify-center text-center p-4 text-xs font-mono text-dim">
+            <Camera className="w-7 h-7 mb-1.5 text-dim/30" />
+            <p>{t("camera.no_photo")}</p>
           </div>
         )}
 

@@ -86,6 +86,8 @@ def save_photo_data(cam_id: str, data: bytes) -> Optional[str]:
         ts = time.strftime("%Y%m%d_%H%M%S")
         dest = settings.storage_dir / f"photo_{cam_id}_{ts}.jpg"
         dest.write_bytes(data)
+        latest_file = settings.storage_dir / "latest_photo.jpg"
+        latest_file.write_bytes(data)
         state.latest_photo = str(dest)
         state.latest_photo_bytes = data
         log_event(f"camera {cam_id} captured {len(data)} bytes saved to {dest}")

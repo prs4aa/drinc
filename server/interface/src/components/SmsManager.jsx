@@ -112,21 +112,10 @@ export default function SmsManager({ status, onRefresh }) {
           </div>
 
           <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={loading || !status?.client_connected}
-              onClick={() => handleFetch(hours)}
-              className="h-7 px-2 text-[11px] font-mono"
-            >
-              <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
-              {t("sms.fetch")}
-            </Button>
-
             {messages.length > 0 && (
               <a href="/api/sms/download" download="sms_messages.json">
-                <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" title="Export JSON">
-                  <Download className="w-3 h-3" />
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-dim hover:text-main" title="Export JSON">
+                  <Download className="w-3.5 h-3.5" />
                 </Button>
               </a>
             )}
@@ -140,11 +129,10 @@ export default function SmsManager({ status, onRefresh }) {
                 }
                 setIsModalOpen(true);
               }}
-              className="h-7 px-2 text-xs font-mono text-teal-400 hover:text-teal-300 hover:bg-teal-950/20 border border-teal-500/20"
+              className="h-7 w-7 p-0 text-teal-400 hover:text-teal-300 hover:bg-teal-950/20 border border-teal-500/20"
               title={t("sms.expand")}
             >
-              <Maximize2 className="w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1" />
-              {t("sms.expand")}
+              <Maximize2 className="w-3.5 h-3.5" />
             </Button>
           </div>
         </CardHeader>
@@ -171,26 +159,26 @@ export default function SmsManager({ status, onRefresh }) {
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <div className="flex bg-input p-0.5 rounded-lg border border-border font-mono text-[10px]">
-                {[24, 72, 168].map((h) => (
-                  <button
-                    key={h}
-                    type="button"
-                    onClick={() => {
-                      setHours(h);
-                      handleFetch(h);
-                    }}
-                    className={`px-2 py-1 rounded font-medium transition-colors ${
-                      Number(hours) === h ? "bg-surface-elevated text-main font-semibold shadow-sm" : "text-dim hover:text-main"
-                    }`}
-                  >
-                    {h === 24 ? "24h" : h === 72 ? "3d" : "7d"}
-                  </button>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
+              <div className="flex items-center space-x-1 rtl:space-x-reverse">
+                <div className="flex bg-input p-0.5 rounded-lg border border-border font-mono text-[10px]">
+                  {[24, 72, 168].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => {
+                        setHours(h);
+                        handleFetch(h);
+                      }}
+                      className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
+                        Number(hours) === h ? "bg-surface-elevated text-main font-semibold shadow-sm" : "text-dim hover:text-main"
+                      }`}
+                    >
+                      {h === 24 ? "24h" : h === 72 ? "3d" : "7d"}
+                    </button>
+                  ))}
+                </div>
 
-              <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
                 <div className="relative flex items-center bg-input rounded-lg border border-border focus-within:border-teal-500/60 transition-colors">
                   <input
                     type="number"
@@ -200,26 +188,25 @@ export default function SmsManager({ status, onRefresh }) {
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleFetch(Number(hours) || 24);
                     }}
-                    className="w-20 pl-3 pr-8 py-1.5 bg-transparent text-main text-xs font-mono focus:outline-none text-right rtl:text-left rtl:pr-3 rtl:pl-8"
+                    className="w-14 pl-2 pr-5 py-1 bg-transparent text-main text-xs font-mono focus:outline-none text-right rtl:text-left rtl:pr-2 rtl:pl-5"
                     placeholder="24"
                   />
-                  <span className="absolute right-3 rtl:right-auto rtl:left-3 text-[11px] text-dim pointer-events-none font-mono select-none">
+                  <span className="absolute right-1.5 rtl:right-auto rtl:left-1.5 text-[10px] text-dim pointer-events-none font-mono select-none">
                     h
                   </span>
                 </div>
-
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={loading || !status?.client_connected}
-                  onClick={() => handleFetch(Number(hours) || 24)}
-                  className="h-7 px-2.5 text-xs font-mono text-teal-400 hover:text-teal-300 border-teal-500/30 hover:bg-teal-950/20"
-                  title="Fetch SMS for custom timeframe"
-                >
-                  <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
-                  {t("sms.fetch")}
-                </Button>
               </div>
+
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading || !status?.client_connected}
+                onClick={() => handleFetch(Number(hours) || 24)}
+                className="h-7 px-2.5 text-xs font-mono text-teal-400 hover:text-teal-300 border-teal-500/30 hover:bg-teal-950/20 whitespace-nowrap flex-shrink-0"
+              >
+                <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
+                {t("sms.fetch")}
+              </Button>
             </div>
           </div>
 

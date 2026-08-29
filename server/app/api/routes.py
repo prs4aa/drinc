@@ -215,15 +215,21 @@ async def api_client_telemetry_get() -> Dict[str, Any]:
 async def api_photo_latest() -> Response:
     if not settings.enable_camera:
         return Response(content=b"", status_code=404)
+    headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
     if state.latest_photo_bytes:
-        return Response(content=state.latest_photo_bytes, media_type="image/jpeg")
+        return Response(content=state.latest_photo_bytes, media_type="image/jpeg", headers=headers)
     try:
+        latest = settings.storage_dir / "latest_photo.jpg"
+        if latest.exists():
+            data = latest.read_bytes()
+            state.latest_photo_bytes = data
+            return Response(content=data, media_type="image/jpeg", headers=headers)
         photos = sorted(settings.storage_dir.glob("photo_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
         if photos:
             data = photos[0].read_bytes()
             state.latest_photo_bytes = data
             state.latest_photo = str(photos[0])
-            return Response(content=data, media_type="image/jpeg")
+            return Response(content=data, media_type="image/jpeg", headers=headers)
     except Exception:
         pass
     return Response(content=b"", status_code=404)
