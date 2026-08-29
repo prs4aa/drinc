@@ -32,6 +32,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         tvStatus = findViewById(R.id.tvStatus)
+        val tvServer = findViewById<TextView>(R.id.tvServer)
+        val prefs = getSharedPreferences("drink_prefs", Context.MODE_PRIVATE)
+        val host = prefs.getString("server_host", "192.168.1.149") ?: "192.168.1.149"
+        val port = prefs.getInt("server_port", 33110)
+        tvServer.text = "Server: $host:$port"
 
         requestPermissions()
         requestBatteryOptimization()
@@ -40,6 +45,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateStatus(DrinkService.isConnected)
         val filter = IntentFilter(DrinkService.ACTION_STATUS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(statusReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -73,10 +79,12 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.READ_CONTACTS,
             Manifest.permission.READ_SMS,
-            Manifest.permission.CAMERA,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
         )
+        if (DrinkService.ENABLE_CAMERA) {
+            permissions.add(Manifest.permission.CAMERA)
+        }
         val toRequest = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }

@@ -12,7 +12,6 @@ class SocketManager(host: String, port: Int, timeoutMs: Int = 10000) {
         tcpNoDelay = true
         keepAlive = true
         connect(InetSocketAddress(host, port), timeoutMs)
-        soTimeout = 30000
     }
     private val input = DataInputStream(socket.getInputStream())
     private val output = DataOutputStream(socket.getOutputStream())
@@ -35,12 +34,14 @@ class SocketManager(host: String, port: Int, timeoutMs: Int = 10000) {
         output.flush()
     }
 
+    @Synchronized
     fun readFrame(): JSONObject {
         val length = input.readInt()
         val bytes = readBytes(length)
         return JSONObject(String(bytes, Charsets.UTF_8))
     }
 
+    @Synchronized
     fun readBytes(n: Int): ByteArray {
         val buffer = ByteArray(n)
         var offset = 0

