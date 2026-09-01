@@ -12,6 +12,22 @@
     "backend_unreachable": "عدم دسترسی به سرور پس‌زمینه — در حال تلاش مجدد...",
     "confirm_kill": "آیا از پایان دادن کامل به فرآیند سرور اطمینان دارید؟"
   },
+  "clients": {
+    "title": "دستگاه‌های متصل",
+    "active_target": "دستگاه فعال",
+    "set_active": "انتخاب به عنوان هدف اصلی",
+    "active": "فعال",
+    "standby": "آماده‌باش",
+    "devices_connected": "{{count}} دستگاه متصل است",
+    "single_connected": "۱ دستگاه متصل است",
+    "no_clients": "هیچ دستگاهی متصل نیست",
+    "switch_to": "تغییر به این دستگاه",
+    "disconnect_device": "قطع اتصال دستگاه",
+    "battery": "باتری",
+    "network": "شبکه",
+    "connected_since": "زمان اتصال",
+    "main_label": "اصلی"
+  },
   "telemetry": {
     "matrix_title": "ماتریس تله‌متری و سخت‌افزار هدف",
     "acquire_fix": "دریافت موقعیت و داده‌ها",

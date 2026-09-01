@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getStatus, getLogs, killServer, disconnectClient, fetchTelemetry, clearAllData } from "./api/client";
+import { getStatus, getLogs, killServer, disconnectClient, fetchTelemetry, clearAllData, selectClient } from "./api/client";
 import { useTranslation } from "./context/LanguageContext";
 import ThemeSelector from "./components/ThemeSelector";
+import ClientSelector from "./components/ClientSelector";
 import MicControl from "./components/MicControl";
 import SmsManager from "./components/SmsManager";
 import ContactsManager from "./components/ContactsManager";
@@ -131,6 +132,9 @@ export default function App() {
   };
 
   const isConnected = !!status?.client_connected;
+  const clients = status?.clients || [];
+  const activeClientId = status?.active_client_id;
+  const activeClient = clients.find(c => c.id === activeClientId) || clients[0];
   const telemetry = status?.telemetry;
   const device = telemetry?.device;
   const battery = telemetry?.battery;
@@ -226,8 +230,13 @@ export default function App() {
               <span className={`w-2 h-2 rounded-full ${isConnected ? "bg-emerald-500" : "bg-slate-600"}`} />
               <span className="text-dim">{t("app.target")}:</span>
               <span className={isConnected ? "text-emerald-400 font-semibold" : "text-dim"}>
-                {isConnected ? (status.client_addr || t("app.online")) : t("app.standby")}
+                {isConnected ? (activeClient?.device_name || status.client_addr || t("app.online")) : t("app.standby")}
               </span>
+              {clients.length > 1 && (
+                <Badge variant="secondary" className="text-[9px] px-1 py-0 font-mono">
+                  {clients.length}
+                </Badge>
+              )}
             </div>
 
             {isConnected && (
@@ -286,6 +295,8 @@ export default function App() {
       )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-5">
+        <ClientSelector status={status} onRefresh={refreshData} />
+
         <div className="flex items-center justify-between pb-1 border-b border-border-muted">
           <div className="flex items-center space-x-2">
             <span className="text-xs uppercase font-mono tracking-widest text-dim">

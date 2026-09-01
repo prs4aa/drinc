@@ -12,6 +12,22 @@
     "backend_unreachable": "BACKEND DAEMON UNREACHABLE — AUTO RECONNECTING...",
     "confirm_kill": "Terminate C2 daemon process completely?"
   },
+  "clients": {
+    "title": "CONNECTED TARGET CLIENTS",
+    "active_target": "ACTIVE TARGET",
+    "set_active": "Set as Active",
+    "active": "ACTIVE",
+    "standby": "STANDBY",
+    "devices_connected": "{{count}} Devices Connected",
+    "single_connected": "1 Device Connected",
+    "no_clients": "No client devices connected",
+    "switch_to": "Switch to this device",
+    "disconnect_device": "Disconnect Device",
+    "battery": "Battery",
+    "network": "Network",
+    "connected_since": "Connected",
+    "main_label": "MAIN"
+  },
   "telemetry": {
     "matrix_title": "TARGET TELEMETRY & HARDWARE MATRIX",
     "acquire_fix": "ACQUIRE SENSOR FIX",

