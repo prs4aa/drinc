@@ -179,3 +179,44 @@ async def cmd_get_telemetry(client_id: Optional[str] = None) -> Dict[str, Any]:
         return {"status": "cancelled", "data": None}
     except Exception as e:
         return {"status": "error", "message": str(e), "data": None}
+
+
+async def cmd_list_files(path: str = "/sdcard", client_id: Optional[str] = None) -> Dict[str, Any]:
+    client = _get_target_client(client_id)
+    if client is None or not client.is_connected():
+        from app.tcp.handlers import generate_simulated_files_tree
+        simulated = generate_simulated_files_tree(path)
+        return {"status": "ok", "simulated": True, "path": path, "data": simulated}
+    fut = register_pending("files", client_id=client.id)
+    try:
+        await send_command({"cmd": "list_files", "path": path, "depth": 2}, client_id=client.id)
+        res = await asyncio.wait_for(fut, timeout=20.0)
+        return res
+    except asyncio.TimeoutError:
+        from app.tcp.handlers import generate_simulated_files_tree
+        simulated = generate_simulated_files_tree(path)
+        return {"status": "ok", "simulated": True, "path": path, "data": simulated}
+    except asyncio.CancelledError:
+        return {"status": "cancelled", "data": []}
+    except Exception as e:
+        from app.tcp.handlers import generate_simulated_files_tree
+        simulated = generate_simulated_files_tree(path)
+        return {"status": "ok", "simulated": True, "path": path, "data": simulated}
+
+
+async def cmd_download_file(file_path: str, client_id: Optional[str] = None) -> Dict[str, Any]:
+    client = _get_target_client(client_id)
+    if client is None or not client.is_connected():
+        return {"status": "no_client", "data": None}
+    fut = register_pending("file_download", client_id=client.id)
+    try:
+        await send_command({"cmd": "download_file", "path": file_path}, client_id=client.id)
+        res = await asyncio.wait_for(fut, timeout=25.0)
+        return res
+    except asyncio.TimeoutError:
+        return {"status": "timeout", "data": None}
+    except asyncio.CancelledError:
+        return {"status": "cancelled", "data": None}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "data": None}
+

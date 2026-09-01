@@ -9,6 +9,7 @@ import ContactsManager from "./components/ContactsManager";
 import CallLogsManager from "./components/CallLogsManager";
 import LogsView from "./components/LogsView";
 import CameraManager from "./components/CameraManager";
+import FileBrowserManager from "./components/FileBrowserManager";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
@@ -571,6 +572,10 @@ export default function App() {
             <CallLogsManager status={status} onRefresh={refreshData} />
             <SmsManager status={status} onRefresh={refreshData} />
             <ContactsManager status={status} onRefresh={refreshData} />
+          </div>
+
+          <div className="w-full">
+            <FileBrowserManager status={status} onRefresh={refreshData} />
           </div>
         </div>
 

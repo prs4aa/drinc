@@ -167,9 +167,41 @@
     "cam_0": "Camera 0 (Back)",
     "cam_1": "Camera 1 (Front)"
   },
+  "files": {
+    "title": "FILE EXPLORER",
+    "sync": "SCAN FILES",
+    "expand": "EXPAND",
+    "search_placeholder": "Search files or folders...",
+    "no_records": "No files listed yet.",
+    "no_matching": "No matching files or directories found.",
+    "dossier_title": "Filesystem Explorer & Directory Matrix",
+    "dossier_desc": "Multi-level filesystem inspection and browser downloading",
+    "all": "ALL",
+    "folders": "FOLDERS",
+    "docs": "DOCS",
+    "media": "MEDIA",
+    "archives": "ARCHIVES",
+    "apps": "APPS",
+    "download": "Download",
+    "downloading": "Downloading...",
+    "download_file": "DOWNLOAD FILE",
+    "copy_path": "Copy Path",
+    "path_copied": "Path Copied",
+    "no_selected": "No file selected",
+    "no_selected_desc": "Select a file from the list or folder tree to view file metadata and download.",
+    "file_details": "FILE METADATA",
+    "size": "Size",
+    "modified": "Modified",
+    "type": "MIME Type",
+    "path": "Full Path",
+    "depth_indicator": "2-Level Subdirectory Depth Loaded",
+    "items_count": "Items",
+    "storage_total": "Discovered Size",
+    "click_to_download": "Click file to download"
+  },
   "clear_data": {
     "button": "Clear Workspace Data",
-    "confirm": "Are you sure you want to clear all data (SMS, contacts, call logs, telemetry, and photos)?",
+    "confirm": "Are you sure you want to clear all data (SMS, contacts, call logs, telemetry, photos, and files)?",
     "cleared": "All data cleared"
   }
 }

