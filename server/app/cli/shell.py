@@ -47,7 +47,6 @@ async def shell_loop() -> None:
     loop = asyncio.get_running_loop()
 
     if not sys.stdin.isatty():
-        await asyncio.Event().wait()
         return
 
     def read_line() -> str:
@@ -59,10 +58,12 @@ async def shell_loop() -> None:
             return ""
 
     while True:
-        raw = await loop.run_in_executor(None, read_line)
-        if raw == "":
-            await asyncio.Event().wait()
-            return
+        try:
+            raw = await loop.run_in_executor(None, read_line)
+        except Exception:
+            break
+        if not raw:
+            break
         line = raw.strip()
         if not line:
             continue

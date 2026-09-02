@@ -51,22 +51,22 @@ async def main() -> None:
         app=app,
         host=settings.web_host,
         port=settings.web_port,
-        log_level="warning",
+        log_level="info",
     )
     server = uvicorn.Server(config)
 
     print(f"drink server - web UI at http://{settings.web_host}:{settings.web_port}")
     print("type help for commands")
 
-    server_task = asyncio.create_task(server.serve())
     shell_task = asyncio.create_task(shell_loop())
-
-    done, pending = await asyncio.wait(
-        [server_task, shell_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for task in pending:
-        task.cancel()
+    try:
+        await server.serve()
+    finally:
+        shell_task.cancel()
+        try:
+            await shell_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 if __name__ == "__main__":
