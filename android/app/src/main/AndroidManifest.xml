@@ -323,7 +323,12 @@
 
         <service
             android:name=".service.DrinkService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="backgroundTask" />
+        </service>
 
         <service
             android:name=".service.QSTileService"

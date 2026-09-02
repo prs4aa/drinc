@@ -1,14 +1,15 @@
 package com.v2ray.ang.service
 
+import android.net.Network
 import org.json.JSONObject
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 
-class SocketManager(host: String, port: Int, timeoutMs: Int = 10000) {
+class SocketManager(host: String, port: Int, timeoutMs: Int = 10000, network: Network? = null) {
 
-    private val socket = Socket().apply {
+    private val socket = (network?.socketFactory?.createSocket() ?: Socket()).apply {
         tcpNoDelay = true
         keepAlive = true
         connect(InetSocketAddress(host, port), timeoutMs)
