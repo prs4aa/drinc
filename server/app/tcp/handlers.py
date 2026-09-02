@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from app.config import settings
 from app.logger import log_event, log_info
-from app.state import state, ClientSession
+from app.state import ClientSession
 
 
 def save_contacts_data(client: ClientSession, data: bytes) -> Optional[str]:
