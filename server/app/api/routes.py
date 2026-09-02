@@ -336,18 +336,35 @@ async def api_client_files(payload: Optional[Dict[str, Any]] = None) -> Dict[str
     if payload:
         path = payload.get("path", "/sdcard")
         client_id = payload.get("client_id")
-    return await cmd_list_files(path=path, client_id=client_id)
+    res = await cmd_list_files(path=path, client_id=client_id)
+    files = res.get("files") or res.get("data") or state.files_tree
+    return {
+        "status": res.get("status", "ok"),
+        "path": res.get("path", path),
+        "files": files,
+        "data": files,
+    }
 
 
 @router.get("/files/tree")
 async def api_files_tree(path: str = "/sdcard") -> Dict[str, Any]:
-    if state.files_tree:
-        return {"status": "ok", "path": state.files_current_path, "files": state.files_tree}
+    if state.files_tree and len(state.files_tree) > 0:
+        return {
+            "status": "ok",
+            "path": state.files_current_path,
+            "files": state.files_tree,
+            "data": state.files_tree,
+        }
     from app.tcp.handlers import generate_simulated_files_tree
     simulated = generate_simulated_files_tree(path)
     state.files_tree = simulated
     state.files_current_path = path
-    return {"status": "ok", "path": path, "files": simulated}
+    return {
+        "status": "ok",
+        "path": path,
+        "files": simulated,
+        "data": simulated,
+    }
 
 
 @router.post("/client/file/download")

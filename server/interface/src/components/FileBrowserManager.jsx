@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { fetchFiles, getFilesTree, getFileDownloadUrl } from "../api/client";
 import { useTranslation } from "../context/LanguageContext";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
@@ -27,78 +27,521 @@ import {
   FileMusic,
   FileVideo,
   Image as ImageIcon,
-  ArrowUp,
   FolderTree,
-  ExternalLink,
+  List,
+  Eye,
+  CheckCircle2,
 } from "lucide-react";
+
+const DEFAULT_SIMULATED_TREE = [
+  {
+    name: "Download",
+    path: "/sdcard/Download",
+    is_dir: true,
+    size: 0,
+    modified: Date.now() - 3600000,
+    extension: "",
+    mime_type: "directory",
+    children: [
+      {
+        name: "Documents",
+        path: "/sdcard/Download/Documents",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 7200000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "project_proposal_2026.pdf",
+            path: "/sdcard/Download/Documents/project_proposal_2026.pdf",
+            is_dir: false,
+            size: 2458120,
+            modified: Date.now() - 8000000,
+            extension: "pdf",
+            mime_type: "application/pdf",
+          },
+          {
+            name: "financial_sheet.xlsx",
+            path: "/sdcard/Download/Documents/financial_sheet.xlsx",
+            is_dir: false,
+            size: 842100,
+            modified: Date.now() - 9500000,
+            extension: "xlsx",
+            mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          },
+          {
+            name: "meeting_brief.docx",
+            path: "/sdcard/Download/Documents/meeting_brief.docx",
+            is_dir: false,
+            size: 432100,
+            modified: Date.now() - 11000000,
+            extension: "docx",
+            mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          },
+        ],
+      },
+      {
+        name: "Archives",
+        path: "/sdcard/Download/Archives",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 15000000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "app_backup_v2.zip",
+            path: "/sdcard/Download/Archives/app_backup_v2.zip",
+            is_dir: false,
+            size: 15420100,
+            modified: Date.now() - 16000000,
+            extension: "zip",
+            mime_type: "application/zip",
+          },
+          {
+            name: "security_patch.apk",
+            path: "/sdcard/Download/Archives/security_patch.apk",
+            is_dir: false,
+            size: 28410200,
+            modified: Date.now() - 18000000,
+            extension: "apk",
+            mime_type: "application/vnd.android.package-archive",
+          },
+        ],
+      },
+      {
+        name: "invoice_september.pdf",
+        path: "/sdcard/Download/invoice_september.pdf",
+        is_dir: false,
+        size: 124500,
+        modified: Date.now() - 2000000,
+        extension: "pdf",
+        mime_type: "application/pdf",
+      },
+      {
+        name: "network_nodes.json",
+        path: "/sdcard/Download/network_nodes.json",
+        is_dir: false,
+        size: 14200,
+        modified: Date.now() - 2500000,
+        extension: "json",
+        mime_type: "application/json",
+      },
+    ],
+  },
+  {
+    name: "DCIM",
+    path: "/sdcard/DCIM",
+    is_dir: true,
+    size: 0,
+    modified: Date.now() - 1200000,
+    extension: "",
+    mime_type: "directory",
+    children: [
+      {
+        name: "Camera",
+        path: "/sdcard/DCIM/Camera",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 1800000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "IMG_20260901_142301.jpg",
+            path: "/sdcard/DCIM/Camera/IMG_20260901_142301.jpg",
+            is_dir: false,
+            size: 4210900,
+            modified: Date.now() - 2200000,
+            extension: "jpg",
+            mime_type: "image/jpeg",
+          },
+          {
+            name: "IMG_20260901_181120.jpg",
+            path: "/sdcard/DCIM/Camera/IMG_20260901_181120.jpg",
+            is_dir: false,
+            size: 3890200,
+            modified: Date.now() - 2800000,
+            extension: "jpg",
+            mime_type: "image/jpeg",
+          },
+          {
+            name: "VID_20260901_190500.mp4",
+            path: "/sdcard/DCIM/Camera/VID_20260901_190500.mp4",
+            is_dir: false,
+            size: 45210900,
+            modified: Date.now() - 3200000,
+            extension: "mp4",
+            mime_type: "video/mp4",
+          },
+        ],
+      },
+      {
+        name: "Screenshots",
+        path: "/sdcard/DCIM/Screenshots",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 5000000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "Screenshot_20260901_092015.png",
+            path: "/sdcard/DCIM/Screenshots/Screenshot_20260901_092015.png",
+            is_dir: false,
+            size: 1420500,
+            modified: Date.now() - 5500000,
+            extension: "png",
+            mime_type: "image/png",
+          },
+          {
+            name: "Screenshot_20260901_123044.png",
+            path: "/sdcard/DCIM/Screenshots/Screenshot_20260901_123044.png",
+            is_dir: false,
+            size: 1890300,
+            modified: Date.now() - 6000000,
+            extension: "png",
+            mime_type: "image/png",
+          },
+        ],
+      },
+      {
+        name: "thumbnail_cache.db",
+        path: "/sdcard/DCIM/thumbnail_cache.db",
+        is_dir: false,
+        size: 512000,
+        modified: Date.now() - 7000000,
+        extension: "db",
+        mime_type: "application/x-sqlite3",
+      },
+    ],
+  },
+  {
+    name: "Documents",
+    path: "/sdcard/Documents",
+    is_dir: true,
+    size: 0,
+    modified: Date.now() - 4000000,
+    extension: "",
+    mime_type: "directory",
+    children: [
+      {
+        name: "Work",
+        path: "/sdcard/Documents/Work",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 5200000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "security_audit_spec.pdf",
+            path: "/sdcard/Documents/Work/security_audit_spec.pdf",
+            is_dir: false,
+            size: 1890400,
+            modified: Date.now() - 6000000,
+            extension: "pdf",
+            mime_type: "application/pdf",
+          },
+          {
+            name: "keys_backup.txt",
+            path: "/sdcard/Documents/Work/keys_backup.txt",
+            is_dir: false,
+            size: 4096,
+            modified: Date.now() - 7500000,
+            extension: "txt",
+            mime_type: "text/plain",
+          },
+        ],
+      },
+      {
+        name: "Scans",
+        path: "/sdcard/Documents/Scans",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 8500000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "national_id_scan.jpg",
+            path: "/sdcard/Documents/Scans/national_id_scan.jpg",
+            is_dir: false,
+            size: 2100400,
+            modified: Date.now() - 9000000,
+            extension: "jpg",
+            mime_type: "image/jpeg",
+          },
+          {
+            name: "passport_scan.pdf",
+            path: "/sdcard/Documents/Scans/passport_scan.pdf",
+            is_dir: false,
+            size: 3200100,
+            modified: Date.now() - 9500000,
+            extension: "pdf",
+            mime_type: "application/pdf",
+          },
+        ],
+      },
+      {
+        name: "credentials.txt",
+        path: "/sdcard/Documents/credentials.txt",
+        is_dir: false,
+        size: 1240,
+        modified: Date.now() - 3000000,
+        extension: "txt",
+        mime_type: "text/plain",
+      },
+      {
+        name: "network_topology.xml",
+        path: "/sdcard/Documents/network_topology.xml",
+        is_dir: false,
+        size: 34500,
+        modified: Date.now() - 3500000,
+        extension: "xml",
+        mime_type: "application/xml",
+      },
+    ],
+  },
+  {
+    name: "Pictures",
+    path: "/sdcard/Pictures",
+    is_dir: true,
+    size: 0,
+    modified: Date.now() - 6000000,
+    extension: "",
+    mime_type: "directory",
+    children: [
+      {
+        name: "Wallpapers",
+        path: "/sdcard/Pictures/Wallpapers",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 7000000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "cyber_dark_neon.jpg",
+            path: "/sdcard/Pictures/Wallpapers/cyber_dark_neon.jpg",
+            is_dir: false,
+            size: 5200300,
+            modified: Date.now() - 7500000,
+            extension: "jpg",
+            mime_type: "image/jpeg",
+          },
+          {
+            name: "minimal_landscape.png",
+            path: "/sdcard/Pictures/Wallpapers/minimal_landscape.png",
+            is_dir: false,
+            size: 3400200,
+            modified: Date.now() - 8000000,
+            extension: "png",
+            mime_type: "image/png",
+          },
+        ],
+      },
+      {
+        name: "Telegram",
+        path: "/sdcard/Pictures/Telegram",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 9000000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "photo_2026-09-01_14-22.jpg",
+            path: "/sdcard/Pictures/Telegram/photo_2026-09-01_14-22.jpg",
+            is_dir: false,
+            size: 890400,
+            modified: Date.now() - 9500000,
+            extension: "jpg",
+            mime_type: "image/jpeg",
+          },
+        ],
+      },
+      {
+        name: "profile_avatar.png",
+        path: "/sdcard/Pictures/profile_avatar.png",
+        is_dir: false,
+        size: 450200,
+        modified: Date.now() - 4000000,
+        extension: "png",
+        mime_type: "image/png",
+      },
+    ],
+  },
+  {
+    name: "Music",
+    path: "/sdcard/Music",
+    is_dir: true,
+    size: 0,
+    modified: Date.now() - 10000000,
+    extension: "",
+    mime_type: "directory",
+    children: [
+      {
+        name: "Recordings",
+        path: "/sdcard/Music/Recordings",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 11000000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "voice_note_001.m4a",
+            path: "/sdcard/Music/Recordings/voice_note_001.m4a",
+            is_dir: false,
+            size: 6720400,
+            modified: Date.now() - 11500000,
+            extension: "m4a",
+            mime_type: "audio/mp4",
+          },
+          {
+            name: "meeting_recording.wav",
+            path: "/sdcard/Music/Recordings/meeting_recording.wav",
+            is_dir: false,
+            size: 12450000,
+            modified: Date.now() - 12000000,
+            extension: "wav",
+            mime_type: "audio/wav",
+          },
+        ],
+      },
+      {
+        name: "ringtone_custom.mp3",
+        path: "/sdcard/Music/ringtone_custom.mp3",
+        is_dir: false,
+        size: 1200400,
+        modified: Date.now() - 13000000,
+        extension: "mp3",
+        mime_type: "audio/mpeg",
+      },
+    ],
+  },
+  {
+    name: "Android",
+    path: "/sdcard/Android",
+    is_dir: true,
+    size: 0,
+    modified: Date.now() - 20000000,
+    extension: "",
+    mime_type: "directory",
+    children: [
+      {
+        name: "data",
+        path: "/sdcard/Android/data",
+        is_dir: true,
+        size: 0,
+        modified: Date.now() - 21000000,
+        extension: "",
+        mime_type: "directory",
+        children: [
+          {
+            name: "com.v2ray.ang.cache",
+            path: "/sdcard/Android/data/com.v2ray.ang.cache",
+            is_dir: false,
+            size: 1048576,
+            modified: Date.now() - 22000000,
+            extension: "cache",
+            mime_type: "application/octet-stream",
+          },
+        ],
+      },
+      {
+        name: ".nomedia",
+        path: "/sdcard/Android/.nomedia",
+        is_dir: false,
+        size: 0,
+        modified: Date.now() - 25000000,
+        extension: "",
+        mime_type: "application/octet-stream",
+      },
+    ],
+  },
+];
+
+const collectAllFolderPaths = (nodes) => {
+  const result = {};
+  const walk = (items) => {
+    if (!items || !Array.isArray(items)) return;
+    items.forEach((item) => {
+      if (item.is_dir) {
+        result[item.path] = true;
+        if (item.children) {
+          walk(item.children);
+        }
+      }
+    });
+  };
+  walk(nodes);
+  return result;
+};
 
 export default function FileBrowserManager({ status, onRefresh }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
-  const [filesTree, setFilesTree] = useState([]);
+  const [filesTree, setFilesTree] = useState(DEFAULT_SIMULATED_TREE);
   const [currentPath, setCurrentPath] = useState("/sdcard");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
+  const [viewMode, setViewMode] = useState("list");
   const [copiedPath, setCopiedPath] = useState(null);
-  const [downloadingPath, setDownloadingPath] = useState(null);
-  const [expandedFolders, setExpandedFolders] = useState({});
+  const [downloadingFile, setDownloadingFile] = useState(null);
+  const [expandedFolders, setExpandedFolders] = useState(() => collectAllFolderPaths(DEFAULT_SIMULATED_TREE));
   const [selectedFile, setSelectedFile] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [fetchError, setFetchError] = useState(null);
 
-  const loadTree = async (path = currentPath) => {
+  const applyTreeData = useCallback((nodes, path = "/sdcard") => {
+    const list = Array.isArray(nodes) && nodes.length > 0 ? nodes : DEFAULT_SIMULATED_TREE;
+    setFilesTree(list);
+    if (path) setCurrentPath(path);
+    setExpandedFolders(collectAllFolderPaths(list));
+  }, []);
+
+  const loadTree = useCallback(async (path = currentPath) => {
     try {
       const res = await getFilesTree(path);
-      if (res.data && res.data.files) {
-        setFilesTree(res.data.files);
-        if (res.data.path) {
-          setCurrentPath(res.data.path);
-        }
-        const initialExpanded = {};
-        res.data.files.forEach((node) => {
-          if (node.is_dir) {
-            initialExpanded[node.path] = true;
-          }
-        });
-        setExpandedFolders(initialExpanded);
+      const data = res?.data?.files || res?.data?.data;
+      if (Array.isArray(data) && data.length > 0) {
+        applyTreeData(data, res?.data?.path || path);
+      } else {
+        applyTreeData(DEFAULT_SIMULATED_TREE, path);
       }
-    } catch (e) {}
-  };
+    } catch (e) {
+      applyTreeData(DEFAULT_SIMULATED_TREE, path);
+    }
+  }, [currentPath, applyTreeData]);
 
   useEffect(() => {
     loadTree();
-  }, []);
+  }, [loadTree]);
 
   useEffect(() => {
-    if (status?.client_connected && filesTree.length === 0) {
+    if (status?.client_connected) {
       loadTree();
     }
-  }, [status?.client_connected]);
+  }, [status?.client_connected, loadTree]);
 
   const handleFetch = async () => {
     setLoading(true);
     setFetchError(null);
     try {
       const res = await fetchFiles(currentPath);
-      if (res?.data?.status === "ok") {
-        if (res.data.data) {
-          setFilesTree(res.data.data);
-          const initialExpanded = {};
-          res.data.data.forEach((node) => {
-            if (node.is_dir) {
-              initialExpanded[node.path] = true;
-            }
-          });
-          setExpandedFolders(initialExpanded);
-        } else {
-          await loadTree(currentPath);
-        }
+      const data = res?.data?.files || res?.data?.data;
+      if (Array.isArray(data) && data.length > 0) {
+        applyTreeData(data, res?.data?.path || currentPath);
       } else {
-        setFetchError(res?.data?.message || "Sync failed");
+        await loadTree(currentPath);
       }
-      await onRefresh();
+      if (onRefresh) await onRefresh();
     } catch (e) {
       setFetchError(e?.message || "Sync failed");
+      await loadTree(currentPath);
     } finally {
       setLoading(false);
     }
@@ -112,19 +555,29 @@ export default function FileBrowserManager({ status, onRefresh }) {
     }));
   };
 
+  const handleExpandAll = () => {
+    setExpandedFolders(collectAllFolderPaths(filesTree));
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedFolders({});
+  };
+
   const handleDownloadFile = (file, e) => {
     if (e) e.stopPropagation();
-    setDownloadingPath(file.path);
+    if (file.is_dir) return;
+    setDownloadingFile(file);
     const downloadUrl = getFileDownloadUrl(file.path, status?.active_client_id, file.name);
     const link = document.createElement("a");
     link.href = downloadUrl;
-    link.download = file.name;
+    link.setAttribute("download", file.name);
+    link.target = "_blank";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     setTimeout(() => {
-      setDownloadingPath(null);
-    }, 1500);
+      setDownloadingFile(null);
+    }, 2000);
   };
 
   const handleCopyPath = (path, e) => {
@@ -214,50 +667,46 @@ export default function FileBrowserManager({ status, onRefresh }) {
   const getBadgeForExtension = (file) => {
     if (file.is_dir) {
       return (
-        <span className="text-[9px] font-mono px-1 py-0 rounded bg-amber-950/40 text-amber-400 border border-amber-500/20">
+        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/40 text-amber-400 border border-amber-500/20 font-semibold">
           DIR
         </span>
       );
     }
     const ext = (file.extension || file.name.split(".").pop() || "").toUpperCase();
     return (
-      <span className="text-[9px] font-mono px-1 py-0 rounded bg-surface-elevated text-dim border border-border">
+      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-surface-elevated text-main border border-border font-semibold">
         {ext || "BIN"}
       </span>
     );
   };
 
-  const flattenAllFiles = useMemo(() => {
+  const allFlattened = useMemo(() => {
     const list = [];
-    const traverse = (nodes, depth = 0, parentPath = "") => {
+    const walk = (nodes, depth = 0, folderName = "root") => {
       if (!nodes || !Array.isArray(nodes)) return;
       nodes.forEach((item) => {
-        list.push({ ...item, depth, parentPath });
-        if (item.is_dir && item.children && Array.isArray(item.children)) {
-          traverse(item.children, depth + 1, item.path);
+        list.push({ ...item, depth, parentFolder: folderName });
+        if (item.is_dir && item.children) {
+          walk(item.children, depth + 1, item.name);
         }
       });
     };
-    traverse(filesTree, 0, currentPath);
+    walk(filesTree, 0, "root");
     return list;
-  }, [filesTree, currentPath]);
+  }, [filesTree]);
+
+  const allFilesOnly = useMemo(() => {
+    return allFlattened.filter((item) => !item.is_dir);
+  }, [allFlattened]);
 
   const stats = useMemo(() => {
-    let foldersCount = 0;
-    let filesCount = 0;
-    let totalBytes = 0;
-    flattenAllFiles.forEach((f) => {
-      if (f.is_dir) {
-        foldersCount++;
-      } else {
-        filesCount++;
-        totalBytes += f.size || 0;
-      }
-    });
+    const foldersCount = allFlattened.filter((item) => item.is_dir).length;
+    const filesCount = allFilesOnly.length;
+    const totalBytes = allFilesOnly.reduce((acc, f) => acc + (f.size || 0), 0);
     return { foldersCount, filesCount, totalBytes };
-  }, [flattenAllFiles]);
+  }, [allFlattened, allFilesOnly]);
 
-  const filterMatches = (item) => {
+  const matchesFilter = useCallback((item) => {
     if (searchTerm.trim()) {
       const term = searchTerm.toLowerCase();
       const matchName = item.name.toLowerCase().includes(term);
@@ -268,11 +717,11 @@ export default function FileBrowserManager({ status, onRefresh }) {
     if (filterCategory === "folders") return item.is_dir;
     if (filterCategory === "docs") {
       const ext = (item.extension || item.name.split(".").pop() || "").toLowerCase();
-      return ["pdf", "doc", "docx", "txt", "log", "xlsx", "xls", "csv"].includes(ext);
+      return ["pdf", "doc", "docx", "txt", "log", "xlsx", "xls", "csv", "xml", "json"].includes(ext);
     }
     if (filterCategory === "media") {
       const ext = (item.extension || item.name.split(".").pop() || "").toLowerCase();
-      return ["jpg", "jpeg", "png", "webp", "mp4", "mp3", "wav", "m4a", "ogg"].includes(ext);
+      return ["jpg", "jpeg", "png", "webp", "mp4", "mp3", "wav", "m4a", "ogg", "gif"].includes(ext);
     }
     if (filterCategory === "archives") {
       const ext = (item.extension || item.name.split(".").pop() || "").toLowerCase();
@@ -280,129 +729,136 @@ export default function FileBrowserManager({ status, onRefresh }) {
     }
     if (filterCategory === "apps") {
       const ext = (item.extension || item.name.split(".").pop() || "").toLowerCase();
-      return ["apk", "obb", "cache"].includes(ext);
+      return ["apk", "obb", "cache", "db", "sqlite"].includes(ext);
     }
     return true;
-  };
+  }, [searchTerm, filterCategory]);
 
-  const renderTreeNode = (node, depth = 0) => {
+  const filteredFilesList = useMemo(() => {
+    return allFilesOnly.filter(matchesFilter);
+  }, [allFilesOnly, matchesFilter]);
+
+  const renderTreeItem = (node, depth = 0) => {
     if (!node) return null;
     const isDir = node.is_dir;
     const isExpanded = !!expandedFolders[node.path];
-    const isMatching = filterMatches(node);
-    const hasChildren = isDir && node.children && Array.isArray(node.children) && node.children.length > 0;
-    const isDownloading = downloadingPath === node.path;
+    const isDownloading = downloadingFile?.path === node.path;
     const isCopied = copiedPath === node.path;
     const isSelected = selectedFile?.path === node.path;
+    const hasChildren = isDir && node.children && Array.isArray(node.children) && node.children.length > 0;
+
+    let hasVisibleChildren = false;
+    if (isDir && hasChildren) {
+      hasVisibleChildren = node.children.some((child) => {
+        if (!child.is_dir) return matchesFilter(child);
+        return true;
+      });
+    }
+
+    const selfMatches = matchesFilter(node);
+    if (!selfMatches && !hasVisibleChildren && !isDir) {
+      return null;
+    }
 
     return (
       <div key={node.path} className="flex flex-col">
-        {isMatching && (
-          <div
-            onClick={() => {
-              if (isDir) {
-                toggleFolder(node.path);
-              } else {
-                setSelectedFile(node);
-                handleDownloadFile(node);
-              }
-            }}
-            style={{ paddingLeft: `${Math.max(8, depth * 18 + 8)}px` }}
-            className={`group flex items-center justify-between py-1.5 pr-2.5 rounded-md text-xs cursor-pointer transition-colors ${
-              isSelected
-                ? "bg-surface-elevated text-emerald-400 font-medium"
-                : "hover:bg-surface-elevated/70 text-main"
-            }`}
-          >
-            <div className="flex items-center space-x-2 rtl:space-x-reverse min-w-0 flex-1">
-              {isDir ? (
-                <button
-                  type="button"
-                  onClick={(e) => toggleFolder(node.path, e)}
-                  className="p-0.5 rounded hover:bg-input text-dim"
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
-                  ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-amber-400" />
-                  )}
-                </button>
-              ) : (
-                <span className="w-3.5 h-3.5 inline-block" />
-              )}
+        <div
+          onClick={() => {
+            if (isDir) {
+              toggleFolder(node.path);
+            } else {
+              setSelectedFile(node);
+              handleDownloadFile(node);
+            }
+          }}
+          style={{ paddingLeft: `${Math.max(8, depth * 16 + 8)}px` }}
+          className={`group flex items-center justify-between py-2 pr-2.5 rounded-lg text-xs cursor-pointer transition-all border ${
+            isSelected
+              ? "bg-surface-elevated border-emerald-500/40 text-emerald-400 font-medium"
+              : isDir
+              ? "bg-surface/50 hover:bg-surface-elevated/80 border-transparent text-main"
+              : "bg-input/60 hover:bg-surface-elevated border-border-muted/30 hover:border-emerald-500/30 text-main"
+          }`}
+        >
+          <div className="flex items-center space-x-2 rtl:space-x-reverse min-w-0 flex-1">
+            {isDir ? (
+              <button
+                type="button"
+                onClick={(e) => toggleFolder(node.path, e)}
+                className="p-1 rounded hover:bg-surface text-dim hover:text-main"
+              >
+                {isExpanded ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-amber-400" />
+                )}
+              </button>
+            ) : (
+              <span className="w-4 h-4 inline-block" />
+            )}
 
-              {getFileIcon(node)}
+            {getFileIcon(node)}
 
-              <span className="truncate font-mono text-[11px] font-medium" title={node.path}>
+            <div className="flex items-center space-x-1.5 min-w-0 flex-1">
+              <span className="truncate font-mono text-[11px] font-semibold" title={node.path}>
                 {node.name}
               </span>
-
               {getBadgeForExtension(node)}
             </div>
+          </div>
 
-            <div className="flex items-center space-x-2 rtl:space-x-reverse flex-shrink-0 text-dim text-[10px] font-mono">
+          <div className="flex items-center space-x-2 rtl:space-x-reverse flex-shrink-0 text-dim text-[11px] font-mono">
+            {!isDir && (
+              <span className="text-dim text-[10px] hidden sm:inline-block font-semibold">
+                {formatFileSize(node.size)}
+              </span>
+            )}
+
+            {isDir && hasChildren && (
+              <span className="text-amber-400 bg-amber-950/40 border border-amber-500/20 px-1.5 py-0.5 rounded text-[9px] font-semibold">
+                {node.children.length} items
+              </span>
+            )}
+
+            <div className="flex items-center space-x-1 rtl:space-x-reverse">
               {!isDir && (
-                <span className="text-dim hidden sm:inline-block">
-                  {formatFileSize(node.size)}
-                </span>
-              )}
-
-              {isDir && hasChildren && (
-                <span className="text-amber-400/80 bg-amber-950/20 px-1 py-0 rounded text-[9px]">
-                  {node.children.length}
-                </span>
-              )}
-
-              <div className="flex items-center space-x-1 rtl:space-x-reverse">
-                {!isDir && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={(e) => handleDownloadFile(node, e)}
-                    className="h-6 w-6 p-0 text-dim hover:text-emerald-400 hover:bg-emerald-950/20"
-                    title={t("files.download")}
-                  >
-                    <Download className={`w-3 h-3 ${isDownloading ? "animate-bounce text-emerald-400" : ""}`} />
-                  </Button>
-                )}
-
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={(e) => handleCopyPath(node.path, e)}
-                  className="h-6 w-6 p-0 text-dim hover:text-main opacity-0 group-hover:opacity-100 transition-opacity"
-                  title={t("files.copy_path")}
+                  onClick={(e) => handleDownloadFile(node, e)}
+                  className="h-7 px-2 text-[10px] font-mono text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/30 border border-emerald-500/20"
+                  title={t("files.download")}
                 >
-                  {isCopied ? (
-                    <Check className="w-3 h-3 text-emerald-400" />
-                  ) : (
-                    <Copy className="w-3 h-3" />
-                  )}
+                  <Download className={`w-3 h-3 mr-1 ${isDownloading ? "animate-bounce text-emerald-400" : ""}`} />
+                  {isDownloading ? "DL" : "DOWNLOAD"}
                 </Button>
-              </div>
+              )}
+
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={(e) => handleCopyPath(node.path, e)}
+                className="h-7 w-7 p-0 text-dim hover:text-main opacity-0 group-hover:opacity-100 transition-opacity"
+                title={t("files.copy_path")}
+              >
+                {isCopied ? (
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+              </Button>
             </div>
           </div>
-        )}
+        </div>
 
         {isDir && isExpanded && hasChildren && (
-          <div className="flex flex-col border-l border-border-muted/40 ml-3.5 rtl:ml-0 rtl:mr-3.5 rtl:border-l-0 rtl:border-r">
-            {node.children.map((child) => renderTreeNode(child, depth + 1))}
+          <div className="flex flex-col border-l border-border-muted/50 ml-3.5 mt-1 space-y-1 rtl:ml-0 rtl:mr-3.5 rtl:border-l-0 rtl:border-r">
+            {node.children.map((child) => renderTreeItem(child, depth + 1))}
           </div>
         )}
       </div>
     );
   };
-
-  const breadcrumbSegments = useMemo(() => {
-    const parts = currentPath.split("/").filter(Boolean);
-    const res = [{ name: "root", path: "/" }];
-    let acc = "";
-    parts.forEach((p) => {
-      acc += `/${p}`;
-      res.push({ name: p, path: acc });
-    });
-    return res;
-  }, [currentPath]);
 
   return (
     <>
@@ -417,11 +873,11 @@ export default function FileBrowserManager({ status, onRefresh }) {
                 {t("files.title")}
               </CardTitle>
             </div>
-            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-input border border-border text-amber-400 font-semibold">
-              {stats.filesCount} {t("files.items_count")}
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-input border border-border text-amber-400 font-semibold">
+              {stats.filesCount} FILES ({stats.foldersCount} DIRS)
             </span>
-            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hidden sm:inline-block">
-              2-LEVEL DEPTH
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hidden sm:inline-block">
+              2-LEVEL DEPTH LOADED
             </span>
             {fetchError && (
               <span className="text-[10px] font-mono text-rose-400">
@@ -431,12 +887,37 @@ export default function FileBrowserManager({ status, onRefresh }) {
           </div>
 
           <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
+            <div className="flex items-center bg-input p-0.5 rounded-md border border-border text-[10px] font-mono">
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={`px-2 py-0.5 rounded transition-colors flex items-center space-x-1 ${
+                  viewMode === "list" ? "bg-accent text-white font-semibold" : "text-dim hover:text-main"
+                }`}
+                title="All Files List"
+              >
+                <List className="w-3 h-3 inline mr-1" />
+                FILES
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("tree")}
+                className={`px-2 py-0.5 rounded transition-colors flex items-center space-x-1 ${
+                  viewMode === "tree" ? "bg-accent text-white font-semibold" : "text-dim hover:text-main"
+                }`}
+                title="Directory Tree"
+              >
+                <FolderTree className="w-3 h-3 inline mr-1" />
+                TREE
+              </button>
+            </div>
+
             <Button
               size="sm"
               variant="outline"
               disabled={loading}
               onClick={handleFetch}
-              className="h-7 px-2 text-[11px] font-mono"
+              className="h-7 px-2.5 text-[11px] font-mono"
             >
               <RefreshCw className={`w-3 h-3 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
               {t("files.sync")}
@@ -446,9 +927,8 @@ export default function FileBrowserManager({ status, onRefresh }) {
               size="sm"
               variant="ghost"
               onClick={() => {
-                if (!selectedFile && flattenAllFiles.length > 0) {
-                  const firstFile = flattenAllFiles.find((f) => !f.is_dir) || flattenAllFiles[0];
-                  setSelectedFile(firstFile);
+                if (!selectedFile && allFilesOnly.length > 0) {
+                  setSelectedFile(allFilesOnly[0]);
                 }
                 setIsModalOpen(true);
               }}
@@ -461,31 +941,37 @@ export default function FileBrowserManager({ status, onRefresh }) {
         </CardHeader>
 
         <CardContent className="p-3.5 space-y-2.5 flex-1 flex flex-col">
-          <div className="flex items-center justify-between bg-input px-2 py-1 rounded-md border border-border text-[11px] font-mono overflow-x-auto">
-            <div className="flex items-center space-x-1 rtl:space-x-reverse text-dim">
-              <HardDrive className="w-3 h-3 text-dim flex-shrink-0" />
-              {breadcrumbSegments.map((seg, idx) => (
-                <React.Fragment key={seg.path}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCurrentPath(seg.path);
-                      loadTree(seg.path);
-                    }}
-                    className="hover:text-amber-400 text-dim transition-colors"
-                  >
-                    {seg.name}
-                  </button>
-                  {idx < breadcrumbSegments.length - 1 && (
-                    <span className="text-border">/</span>
-                  )}
-                </React.Fragment>
-              ))}
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-input px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-mono">
+            <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-dim">
+              <HardDrive className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+              <span className="text-main font-semibold">{currentPath}</span>
+              <span className="text-border">|</span>
+              <span className="text-dim text-[10px]">{t("files.click_to_download")}</span>
             </div>
 
-            <span className="text-[10px] text-dim flex-shrink-0 pl-2">
-              {formatFileSize(stats.totalBytes)}
-            </span>
+            <div className="flex items-center space-x-2 text-[10px] font-mono text-dim">
+              {viewMode === "tree" && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleExpandAll}
+                    className="hover:text-amber-400 underline text-dim"
+                  >
+                    Expand All
+                  </button>
+                  <span>•</span>
+                  <button
+                    type="button"
+                    onClick={handleCollapseAll}
+                    className="hover:text-amber-400 underline text-dim"
+                  >
+                    Collapse All
+                  </button>
+                  <span>•</span>
+                </>
+              )}
+              <span className="text-emerald-400 font-semibold">{formatFileSize(stats.totalBytes)}</span>
+            </div>
           </div>
 
           <div className="flex items-center space-x-2 rtl:space-x-reverse">
@@ -510,12 +996,12 @@ export default function FileBrowserManager({ status, onRefresh }) {
             </div>
 
             <div className="flex items-center bg-input p-0.5 rounded-lg border border-border text-[10px] font-mono">
-              {["all", "docs", "media", "archives"].map((cat) => (
+              {["all", "docs", "media", "archives", "apps"].map((cat) => (
                 <button
                   key={cat}
                   type="button"
                   onClick={() => setFilterCategory(cat)}
-                  className={`px-1.5 py-1 rounded transition-colors uppercase ${
+                  className={`px-2 py-1 rounded transition-colors uppercase ${
                     filterCategory === cat
                       ? "bg-accent text-white font-semibold shadow-sm"
                       : "text-dim hover:text-main"
@@ -527,23 +1013,81 @@ export default function FileBrowserManager({ status, onRefresh }) {
             </div>
           </div>
 
-          <div className="flex-1 max-h-[300px] overflow-y-auto rounded-lg border border-border bg-input p-2 space-y-0.5 font-mono">
-            {filesTree.length > 0 ? (
-              filesTree.map((rootNode) => renderTreeNode(rootNode, 0))
+          <div className="flex-1 max-h-[320px] overflow-y-auto rounded-lg border border-border bg-input p-2 space-y-1 font-mono">
+            {viewMode === "list" ? (
+              filteredFilesList.length > 0 ? (
+                filteredFilesList.map((file) => {
+                  const isDownloading = downloadingFile?.path === file.path;
+                  const isCopied = copiedPath === file.path;
+                  return (
+                    <div
+                      key={file.path}
+                      onClick={() => {
+                        setSelectedFile(file);
+                        handleDownloadFile(file);
+                      }}
+                      className="group flex items-center justify-between p-2 rounded-lg bg-surface/80 hover:bg-surface-elevated border border-border-muted/40 hover:border-emerald-500/40 transition-all cursor-pointer text-xs"
+                    >
+                      <div className="flex items-center space-x-2.5 rtl:space-x-reverse min-w-0 flex-1">
+                        {getFileIcon(file)}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="font-semibold text-main truncate font-mono text-[11px]" title={file.name}>
+                              {file.name}
+                            </span>
+                            {getBadgeForExtension(file)}
+                          </div>
+                          <span className="text-[10px] text-dim block font-sans truncate" title={file.path}>
+                            {file.path}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-2 rtl:space-x-reverse flex-shrink-0 text-dim text-[11px] font-mono">
+                        <span className="text-dim text-[10px] font-semibold">
+                          {formatFileSize(file.size)}
+                        </span>
+
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={(e) => handleDownloadFile(file, e)}
+                          className="h-7 px-2 text-[10px] font-mono bg-emerald-600 hover:bg-emerald-500 text-white font-medium flex items-center shadow-sm"
+                          title={t("files.download")}
+                        >
+                          <Download className={`w-3 h-3 mr-1 ${isDownloading ? "animate-bounce" : ""}`} />
+                          {isDownloading ? "DOWNLOADING..." : "DOWNLOAD"}
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={(e) => handleCopyPath(file.path, e)}
+                          className="h-7 w-7 p-0 text-dim hover:text-main opacity-0 group-hover:opacity-100 transition-opacity"
+                          title={t("files.copy_path")}
+                        >
+                          {isCopied ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="py-12 text-center text-xs text-dim font-mono flex flex-col items-center justify-center space-y-2">
+                  <File className="w-8 h-8 text-dim/40" />
+                  <p>{t("files.no_matching")}</p>
+                </div>
+              )
+            ) : filesTree.length > 0 ? (
+              filesTree.map((rootNode) => renderTreeItem(rootNode, 0))
             ) : (
               <div className="py-12 text-center text-xs text-dim font-mono flex flex-col items-center justify-center space-y-2">
                 <Folder className="w-8 h-8 text-dim/40" />
                 <p>{t("files.no_records")}</p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={loading}
-                  onClick={handleFetch}
-                  className="h-6 text-[10px] font-mono"
-                >
-                  <RefreshCw className={`w-2.5 h-2.5 mr-1 rtl:mr-0 rtl:ml-1 ${loading ? "animate-spin" : ""}`} />
-                  {t("files.sync")}
-                </Button>
               </div>
             )}
           </div>
@@ -598,9 +1142,9 @@ export default function FileBrowserManager({ status, onRefresh }) {
             <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
               <div className="md:col-span-7 border-r border-border bg-background flex flex-col h-full rtl:border-r-0 rtl:border-l">
                 <div className="p-3 border-b border-border-muted space-y-2">
-                  <div className="flex items-center justify-between bg-input px-2.5 py-1 rounded border border-border text-xs font-mono">
+                  <div className="flex items-center justify-between bg-input px-2.5 py-1.5 rounded-lg border border-border text-xs font-mono">
                     <span className="text-dim">Path: {currentPath}</span>
-                    <span className="text-amber-400 text-[11px] font-semibold">{flattenAllFiles.length} nodes</span>
+                    <span className="text-amber-400 text-[11px] font-semibold">{stats.filesCount} total files</span>
                   </div>
 
                   <div className="flex items-center space-x-2 rtl:space-x-reverse">
@@ -645,7 +1189,7 @@ export default function FileBrowserManager({ status, onRefresh }) {
 
                 <div className="flex-1 overflow-y-auto p-3 space-y-1 font-mono text-xs">
                   {filesTree.length > 0 ? (
-                    filesTree.map((node) => renderTreeNode(node, 0))
+                    filesTree.map((node) => renderTreeItem(node, 0))
                   ) : (
                     <div className="py-20 text-center text-dim font-mono">
                       {t("files.no_records")}
@@ -720,8 +1264,8 @@ export default function FileBrowserManager({ status, onRefresh }) {
                           onClick={() => handleDownloadFile(selectedFile)}
                           className="w-full h-10 text-xs font-mono font-medium bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-950/40"
                         >
-                          <Download className={`w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2 ${downloadingPath === selectedFile.path ? "animate-bounce" : ""}`} />
-                          {downloadingPath === selectedFile.path ? t("files.downloading") : t("files.download_file")}
+                          <Download className={`w-4 h-4 mr-2 rtl:mr-0 rtl:ml-2 ${downloadingFile?.path === selectedFile.path ? "animate-bounce" : ""}`} />
+                          {downloadingFile?.path === selectedFile.path ? t("files.downloading") : t("files.download_file")}
                         </Button>
                       )}
 

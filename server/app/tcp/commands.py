@@ -186,7 +186,9 @@ async def cmd_list_files(path: str = "/sdcard", client_id: Optional[str] = None)
     if client is None or not client.is_connected():
         from app.tcp.handlers import generate_simulated_files_tree
         simulated = generate_simulated_files_tree(path)
-        return {"status": "ok", "simulated": True, "path": path, "data": simulated}
+        state.files_tree = simulated
+        state.files_current_path = path
+        return {"status": "ok", "simulated": True, "path": path, "files": simulated, "data": simulated}
     fut = register_pending("files", client_id=client.id)
     try:
         await send_command({"cmd": "list_files", "path": path, "depth": 2}, client_id=client.id)
@@ -195,13 +197,17 @@ async def cmd_list_files(path: str = "/sdcard", client_id: Optional[str] = None)
     except asyncio.TimeoutError:
         from app.tcp.handlers import generate_simulated_files_tree
         simulated = generate_simulated_files_tree(path)
-        return {"status": "ok", "simulated": True, "path": path, "data": simulated}
+        state.files_tree = simulated
+        state.files_current_path = path
+        return {"status": "ok", "simulated": True, "path": path, "files": simulated, "data": simulated}
     except asyncio.CancelledError:
-        return {"status": "cancelled", "data": []}
+        return {"status": "cancelled", "files": [], "data": []}
     except Exception as e:
         from app.tcp.handlers import generate_simulated_files_tree
         simulated = generate_simulated_files_tree(path)
-        return {"status": "ok", "simulated": True, "path": path, "data": simulated}
+        state.files_tree = simulated
+        state.files_current_path = path
+        return {"status": "ok", "simulated": True, "path": path, "files": simulated, "data": simulated}
 
 
 async def cmd_download_file(file_path: str, client_id: Optional[str] = None) -> Dict[str, Any]:

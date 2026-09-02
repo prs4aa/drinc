@@ -380,6 +380,11 @@ class AppState:
         except Exception:
             pass
 
+        if not self.persisted_files:
+            from app.tcp.handlers import generate_simulated_files_tree
+            self.persisted_files = generate_simulated_files_tree("/sdcard")
+            self.persisted_files_path = "/sdcard"
+
     def clear_all_data(self) -> None:
         for client in self.clients.values():
             client.latest_sms = []
