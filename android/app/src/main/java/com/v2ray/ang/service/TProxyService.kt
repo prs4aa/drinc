@@ -36,7 +36,9 @@ class TProxyService(
         private external fun TProxyGetStats(): LongArray?
 
         init {
-            System.loadLibrary("hev-socks5-tunnel")
+            runCatching {
+                System.loadLibrary("hev-socks5-tunnel")
+            }
         }
     }
 

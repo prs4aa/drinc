@@ -183,8 +183,8 @@ export default function MicControl({ status, onRefresh }) {
         };
 
         const now = ctx.currentTime;
-        if (nextPlayTimeRef.current < now || nextPlayTimeRef.current > now + 0.35) {
-          nextPlayTimeRef.current = now + 0.05;
+        if (nextPlayTimeRef.current < now || nextPlayTimeRef.current > now + 0.4) {
+          nextPlayTimeRef.current = now + 0.06;
         }
         source.start(nextPlayTimeRef.current);
         nextPlayTimeRef.current += buffer.duration;

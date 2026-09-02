@@ -41,8 +41,9 @@ class AngApplication : Application() {
 
         AppLocaleManager.initialize(this)
 
-        // Initialize WorkManager with the custom configuration
-        WorkManager.initialize(this, workManagerConfiguration)
+        runCatching {
+            WorkManager.initialize(this, workManagerConfiguration)
+        }
 
         // Ensure critical preference defaults are present in MMKV early
         SettingsManager.initApp(this)
