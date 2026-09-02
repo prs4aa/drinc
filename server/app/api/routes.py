@@ -348,22 +348,20 @@ async def api_client_files(payload: Optional[Dict[str, Any]] = None) -> Dict[str
 
 @router.get("/files/tree")
 async def api_files_tree(path: str = "/sdcard") -> Dict[str, Any]:
-    if state.files_tree and len(state.files_tree) > 0:
+    if state.client_connected() and not state.files_tree:
+        res = await cmd_list_files(path=path)
+        files = res.get("files") or res.get("data") or []
         return {
-            "status": "ok",
-            "path": state.files_current_path,
-            "files": state.files_tree,
-            "data": state.files_tree,
+            "status": res.get("status", "ok"),
+            "path": res.get("path", path),
+            "files": files,
+            "data": files,
         }
-    from app.tcp.handlers import generate_simulated_files_tree
-    simulated = generate_simulated_files_tree(path)
-    state.files_tree = simulated
-    state.files_current_path = path
     return {
         "status": "ok",
-        "path": path,
-        "files": simulated,
-        "data": simulated,
+        "path": state.files_current_path or path,
+        "files": state.files_tree,
+        "data": state.files_tree,
     }
 
 
@@ -432,31 +430,10 @@ async def api_file_download(path: str, client_id: Optional[str] = None, name: Op
             },
         )
 
-    if ext in ["txt", "log"]:
-        dummy = f"=== INTERCEPTED DEVICE FILE ===\nPath: {path}\nTimestamp: 2026-09-01\nStatus: Captured\nContent simulation payload.\n".encode("utf-8")
-    elif ext == "json":
-        dummy = json.dumps({"status": "ok", "path": path, "file": filename, "intercepted": True}, indent=2).encode("utf-8")
-    elif ext in ["jpg", "jpeg"]:
-        dummy = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\xff\xd9"
-    elif ext == "png":
-        dummy = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
-    elif ext == "pdf":
-        dummy = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000010 00000 n \n0000000057 00000 n \n0000000114 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF"
-    elif ext == "zip":
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("readme.txt", f"Simulated archive package for {filename}\n")
-        dummy = buf.getvalue()
-    else:
-        dummy = f"DEVICE SIMULATION DATA FOR {filename}\nPath: {path}\n".encode("utf-8")
-
     return Response(
-        content=dummy,
-        media_type=mime_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-            "Content-Length": str(len(dummy)),
-        },
+        content=f"Error: File '{filename}' not available on server or disconnected device.".encode("utf-8"),
+        status_code=404,
+        media_type="text/plain",
     )
 
 

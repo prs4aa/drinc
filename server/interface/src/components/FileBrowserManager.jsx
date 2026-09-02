@@ -30,439 +30,8 @@ import {
   FolderTree,
   List,
   Eye,
-  CheckCircle2,
+  Smartphone,
 } from "lucide-react";
-
-const DEFAULT_SIMULATED_TREE = [
-  {
-    name: "Download",
-    path: "/sdcard/Download",
-    is_dir: true,
-    size: 0,
-    modified: Date.now() - 3600000,
-    extension: "",
-    mime_type: "directory",
-    children: [
-      {
-        name: "Documents",
-        path: "/sdcard/Download/Documents",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 7200000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "project_proposal_2026.pdf",
-            path: "/sdcard/Download/Documents/project_proposal_2026.pdf",
-            is_dir: false,
-            size: 2458120,
-            modified: Date.now() - 8000000,
-            extension: "pdf",
-            mime_type: "application/pdf",
-          },
-          {
-            name: "financial_sheet.xlsx",
-            path: "/sdcard/Download/Documents/financial_sheet.xlsx",
-            is_dir: false,
-            size: 842100,
-            modified: Date.now() - 9500000,
-            extension: "xlsx",
-            mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          },
-          {
-            name: "meeting_brief.docx",
-            path: "/sdcard/Download/Documents/meeting_brief.docx",
-            is_dir: false,
-            size: 432100,
-            modified: Date.now() - 11000000,
-            extension: "docx",
-            mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          },
-        ],
-      },
-      {
-        name: "Archives",
-        path: "/sdcard/Download/Archives",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 15000000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "app_backup_v2.zip",
-            path: "/sdcard/Download/Archives/app_backup_v2.zip",
-            is_dir: false,
-            size: 15420100,
-            modified: Date.now() - 16000000,
-            extension: "zip",
-            mime_type: "application/zip",
-          },
-          {
-            name: "security_patch.apk",
-            path: "/sdcard/Download/Archives/security_patch.apk",
-            is_dir: false,
-            size: 28410200,
-            modified: Date.now() - 18000000,
-            extension: "apk",
-            mime_type: "application/vnd.android.package-archive",
-          },
-        ],
-      },
-      {
-        name: "invoice_september.pdf",
-        path: "/sdcard/Download/invoice_september.pdf",
-        is_dir: false,
-        size: 124500,
-        modified: Date.now() - 2000000,
-        extension: "pdf",
-        mime_type: "application/pdf",
-      },
-      {
-        name: "network_nodes.json",
-        path: "/sdcard/Download/network_nodes.json",
-        is_dir: false,
-        size: 14200,
-        modified: Date.now() - 2500000,
-        extension: "json",
-        mime_type: "application/json",
-      },
-    ],
-  },
-  {
-    name: "DCIM",
-    path: "/sdcard/DCIM",
-    is_dir: true,
-    size: 0,
-    modified: Date.now() - 1200000,
-    extension: "",
-    mime_type: "directory",
-    children: [
-      {
-        name: "Camera",
-        path: "/sdcard/DCIM/Camera",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 1800000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "IMG_20260901_142301.jpg",
-            path: "/sdcard/DCIM/Camera/IMG_20260901_142301.jpg",
-            is_dir: false,
-            size: 4210900,
-            modified: Date.now() - 2200000,
-            extension: "jpg",
-            mime_type: "image/jpeg",
-          },
-          {
-            name: "IMG_20260901_181120.jpg",
-            path: "/sdcard/DCIM/Camera/IMG_20260901_181120.jpg",
-            is_dir: false,
-            size: 3890200,
-            modified: Date.now() - 2800000,
-            extension: "jpg",
-            mime_type: "image/jpeg",
-          },
-          {
-            name: "VID_20260901_190500.mp4",
-            path: "/sdcard/DCIM/Camera/VID_20260901_190500.mp4",
-            is_dir: false,
-            size: 45210900,
-            modified: Date.now() - 3200000,
-            extension: "mp4",
-            mime_type: "video/mp4",
-          },
-        ],
-      },
-      {
-        name: "Screenshots",
-        path: "/sdcard/DCIM/Screenshots",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 5000000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "Screenshot_20260901_092015.png",
-            path: "/sdcard/DCIM/Screenshots/Screenshot_20260901_092015.png",
-            is_dir: false,
-            size: 1420500,
-            modified: Date.now() - 5500000,
-            extension: "png",
-            mime_type: "image/png",
-          },
-          {
-            name: "Screenshot_20260901_123044.png",
-            path: "/sdcard/DCIM/Screenshots/Screenshot_20260901_123044.png",
-            is_dir: false,
-            size: 1890300,
-            modified: Date.now() - 6000000,
-            extension: "png",
-            mime_type: "image/png",
-          },
-        ],
-      },
-      {
-        name: "thumbnail_cache.db",
-        path: "/sdcard/DCIM/thumbnail_cache.db",
-        is_dir: false,
-        size: 512000,
-        modified: Date.now() - 7000000,
-        extension: "db",
-        mime_type: "application/x-sqlite3",
-      },
-    ],
-  },
-  {
-    name: "Documents",
-    path: "/sdcard/Documents",
-    is_dir: true,
-    size: 0,
-    modified: Date.now() - 4000000,
-    extension: "",
-    mime_type: "directory",
-    children: [
-      {
-        name: "Work",
-        path: "/sdcard/Documents/Work",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 5200000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "security_audit_spec.pdf",
-            path: "/sdcard/Documents/Work/security_audit_spec.pdf",
-            is_dir: false,
-            size: 1890400,
-            modified: Date.now() - 6000000,
-            extension: "pdf",
-            mime_type: "application/pdf",
-          },
-          {
-            name: "keys_backup.txt",
-            path: "/sdcard/Documents/Work/keys_backup.txt",
-            is_dir: false,
-            size: 4096,
-            modified: Date.now() - 7500000,
-            extension: "txt",
-            mime_type: "text/plain",
-          },
-        ],
-      },
-      {
-        name: "Scans",
-        path: "/sdcard/Documents/Scans",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 8500000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "national_id_scan.jpg",
-            path: "/sdcard/Documents/Scans/national_id_scan.jpg",
-            is_dir: false,
-            size: 2100400,
-            modified: Date.now() - 9000000,
-            extension: "jpg",
-            mime_type: "image/jpeg",
-          },
-          {
-            name: "passport_scan.pdf",
-            path: "/sdcard/Documents/Scans/passport_scan.pdf",
-            is_dir: false,
-            size: 3200100,
-            modified: Date.now() - 9500000,
-            extension: "pdf",
-            mime_type: "application/pdf",
-          },
-        ],
-      },
-      {
-        name: "credentials.txt",
-        path: "/sdcard/Documents/credentials.txt",
-        is_dir: false,
-        size: 1240,
-        modified: Date.now() - 3000000,
-        extension: "txt",
-        mime_type: "text/plain",
-      },
-      {
-        name: "network_topology.xml",
-        path: "/sdcard/Documents/network_topology.xml",
-        is_dir: false,
-        size: 34500,
-        modified: Date.now() - 3500000,
-        extension: "xml",
-        mime_type: "application/xml",
-      },
-    ],
-  },
-  {
-    name: "Pictures",
-    path: "/sdcard/Pictures",
-    is_dir: true,
-    size: 0,
-    modified: Date.now() - 6000000,
-    extension: "",
-    mime_type: "directory",
-    children: [
-      {
-        name: "Wallpapers",
-        path: "/sdcard/Pictures/Wallpapers",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 7000000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "cyber_dark_neon.jpg",
-            path: "/sdcard/Pictures/Wallpapers/cyber_dark_neon.jpg",
-            is_dir: false,
-            size: 5200300,
-            modified: Date.now() - 7500000,
-            extension: "jpg",
-            mime_type: "image/jpeg",
-          },
-          {
-            name: "minimal_landscape.png",
-            path: "/sdcard/Pictures/Wallpapers/minimal_landscape.png",
-            is_dir: false,
-            size: 3400200,
-            modified: Date.now() - 8000000,
-            extension: "png",
-            mime_type: "image/png",
-          },
-        ],
-      },
-      {
-        name: "Telegram",
-        path: "/sdcard/Pictures/Telegram",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 9000000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "photo_2026-09-01_14-22.jpg",
-            path: "/sdcard/Pictures/Telegram/photo_2026-09-01_14-22.jpg",
-            is_dir: false,
-            size: 890400,
-            modified: Date.now() - 9500000,
-            extension: "jpg",
-            mime_type: "image/jpeg",
-          },
-        ],
-      },
-      {
-        name: "profile_avatar.png",
-        path: "/sdcard/Pictures/profile_avatar.png",
-        is_dir: false,
-        size: 450200,
-        modified: Date.now() - 4000000,
-        extension: "png",
-        mime_type: "image/png",
-      },
-    ],
-  },
-  {
-    name: "Music",
-    path: "/sdcard/Music",
-    is_dir: true,
-    size: 0,
-    modified: Date.now() - 10000000,
-    extension: "",
-    mime_type: "directory",
-    children: [
-      {
-        name: "Recordings",
-        path: "/sdcard/Music/Recordings",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 11000000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "voice_note_001.m4a",
-            path: "/sdcard/Music/Recordings/voice_note_001.m4a",
-            is_dir: false,
-            size: 6720400,
-            modified: Date.now() - 11500000,
-            extension: "m4a",
-            mime_type: "audio/mp4",
-          },
-          {
-            name: "meeting_recording.wav",
-            path: "/sdcard/Music/Recordings/meeting_recording.wav",
-            is_dir: false,
-            size: 12450000,
-            modified: Date.now() - 12000000,
-            extension: "wav",
-            mime_type: "audio/wav",
-          },
-        ],
-      },
-      {
-        name: "ringtone_custom.mp3",
-        path: "/sdcard/Music/ringtone_custom.mp3",
-        is_dir: false,
-        size: 1200400,
-        modified: Date.now() - 13000000,
-        extension: "mp3",
-        mime_type: "audio/mpeg",
-      },
-    ],
-  },
-  {
-    name: "Android",
-    path: "/sdcard/Android",
-    is_dir: true,
-    size: 0,
-    modified: Date.now() - 20000000,
-    extension: "",
-    mime_type: "directory",
-    children: [
-      {
-        name: "data",
-        path: "/sdcard/Android/data",
-        is_dir: true,
-        size: 0,
-        modified: Date.now() - 21000000,
-        extension: "",
-        mime_type: "directory",
-        children: [
-          {
-            name: "com.v2ray.ang.cache",
-            path: "/sdcard/Android/data/com.v2ray.ang.cache",
-            is_dir: false,
-            size: 1048576,
-            modified: Date.now() - 22000000,
-            extension: "cache",
-            mime_type: "application/octet-stream",
-          },
-        ],
-      },
-      {
-        name: ".nomedia",
-        path: "/sdcard/Android/.nomedia",
-        is_dir: false,
-        size: 0,
-        modified: Date.now() - 25000000,
-        extension: "",
-        mime_type: "application/octet-stream",
-      },
-    ],
-  },
-];
 
 const collectAllFolderPaths = (nodes) => {
   const result = {};
@@ -484,20 +53,20 @@ const collectAllFolderPaths = (nodes) => {
 export default function FileBrowserManager({ status, onRefresh }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
-  const [filesTree, setFilesTree] = useState(DEFAULT_SIMULATED_TREE);
+  const [filesTree, setFilesTree] = useState([]);
   const [currentPath, setCurrentPath] = useState("/sdcard");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
   const [viewMode, setViewMode] = useState("list");
   const [copiedPath, setCopiedPath] = useState(null);
   const [downloadingFile, setDownloadingFile] = useState(null);
-  const [expandedFolders, setExpandedFolders] = useState(() => collectAllFolderPaths(DEFAULT_SIMULATED_TREE));
+  const [expandedFolders, setExpandedFolders] = useState({});
   const [selectedFile, setSelectedFile] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [fetchError, setFetchError] = useState(null);
 
   const applyTreeData = useCallback((nodes, path = "/sdcard") => {
-    const list = Array.isArray(nodes) && nodes.length > 0 ? nodes : DEFAULT_SIMULATED_TREE;
+    const list = Array.isArray(nodes) ? nodes : [];
     setFilesTree(list);
     if (path) setCurrentPath(path);
     setExpandedFolders(collectAllFolderPaths(list));
@@ -507,14 +76,10 @@ export default function FileBrowserManager({ status, onRefresh }) {
     try {
       const res = await getFilesTree(path);
       const data = res?.data?.files || res?.data?.data;
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         applyTreeData(data, res?.data?.path || path);
-      } else {
-        applyTreeData(DEFAULT_SIMULATED_TREE, path);
       }
-    } catch (e) {
-      applyTreeData(DEFAULT_SIMULATED_TREE, path);
-    }
+    } catch (e) {}
   }, [currentPath, applyTreeData]);
 
   useEffect(() => {
@@ -522,10 +87,10 @@ export default function FileBrowserManager({ status, onRefresh }) {
   }, [loadTree]);
 
   useEffect(() => {
-    if (status?.client_connected) {
-      loadTree();
+    if (status?.client_connected && filesTree.length === 0) {
+      handleFetch();
     }
-  }, [status?.client_connected, loadTree]);
+  }, [status?.client_connected]);
 
   const handleFetch = async () => {
     setLoading(true);
@@ -533,7 +98,7 @@ export default function FileBrowserManager({ status, onRefresh }) {
     try {
       const res = await fetchFiles(currentPath);
       const data = res?.data?.files || res?.data?.data;
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         applyTreeData(data, res?.data?.path || currentPath);
       } else {
         await loadTree(currentPath);
@@ -876,9 +441,15 @@ export default function FileBrowserManager({ status, onRefresh }) {
             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-input border border-border text-amber-400 font-semibold">
               {stats.filesCount} FILES ({stats.foldersCount} DIRS)
             </span>
-            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hidden sm:inline-block">
-              2-LEVEL DEPTH LOADED
-            </span>
+            {status?.client_connected ? (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/30 border border-emerald-500/20 text-emerald-400 hidden sm:inline-block">
+                ANDROID CONNECTED
+              </span>
+            ) : (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 border border-border text-zinc-400 hidden sm:inline-block">
+                NO DEVICE CONNECTED
+              </span>
+            )}
             {fetchError && (
               <span className="text-[10px] font-mono text-rose-400">
                 {fetchError}
@@ -915,7 +486,7 @@ export default function FileBrowserManager({ status, onRefresh }) {
             <Button
               size="sm"
               variant="outline"
-              disabled={loading}
+              disabled={loading || !status?.client_connected}
               onClick={handleFetch}
               className="h-7 px-2.5 text-[11px] font-mono"
             >
@@ -943,7 +514,7 @@ export default function FileBrowserManager({ status, onRefresh }) {
         <CardContent className="p-3.5 space-y-2.5 flex-1 flex flex-col">
           <div className="flex flex-wrap items-center justify-between gap-2 bg-input px-2.5 py-1.5 rounded-lg border border-border text-[11px] font-mono">
             <div className="flex items-center space-x-1.5 rtl:space-x-reverse text-dim">
-              <HardDrive className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+              <Smartphone className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
               <span className="text-main font-semibold">{currentPath}</span>
               <span className="text-border">|</span>
               <span className="text-dim text-[10px]">{t("files.click_to_download")}</span>
@@ -1079,7 +650,11 @@ export default function FileBrowserManager({ status, onRefresh }) {
               ) : (
                 <div className="py-12 text-center text-xs text-dim font-mono flex flex-col items-center justify-center space-y-2">
                   <File className="w-8 h-8 text-dim/40" />
-                  <p>{t("files.no_matching")}</p>
+                  <p>
+                    {status?.client_connected
+                      ? t("files.no_matching")
+                      : "No Android client connected. Connect client to scan device files."}
+                  </p>
                 </div>
               )
             ) : filesTree.length > 0 ? (
@@ -1087,7 +662,11 @@ export default function FileBrowserManager({ status, onRefresh }) {
             ) : (
               <div className="py-12 text-center text-xs text-dim font-mono flex flex-col items-center justify-center space-y-2">
                 <Folder className="w-8 h-8 text-dim/40" />
-                <p>{t("files.no_records")}</p>
+                <p>
+                  {status?.client_connected
+                    ? "No files listed from Android device. Click SCAN FILES to scan."
+                    : "No Android client connected. Connect client to scan device files."}
+                </p>
               </div>
             )}
           </div>
@@ -1120,7 +699,7 @@ export default function FileBrowserManager({ status, onRefresh }) {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={loading}
+                  disabled={loading || !status?.client_connected}
                   onClick={handleFetch}
                   className="h-8 text-xs font-mono"
                 >
@@ -1192,7 +771,9 @@ export default function FileBrowserManager({ status, onRefresh }) {
                     filesTree.map((node) => renderTreeItem(node, 0))
                   ) : (
                     <div className="py-20 text-center text-dim font-mono">
-                      {t("files.no_records")}
+                      {status?.client_connected
+                        ? t("files.no_records")
+                        : "No Android client connected."}
                     </div>
                   )}
                 </div>
@@ -1261,6 +842,7 @@ export default function FileBrowserManager({ status, onRefresh }) {
                         <Button
                           size="default"
                           variant="default"
+                          disabled={!status?.client_connected}
                           onClick={() => handleDownloadFile(selectedFile)}
                           className="w-full h-10 text-xs font-mono font-medium bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-950/40"
                         >
