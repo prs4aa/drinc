@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import router, ws_router
+from app.api import auth_router, router, ws_router
 from app.cli.shell import shell_loop
 from app.config import settings
 from app.tcp.server import start_tcp_server_action, stop_tcp_server_action
@@ -30,6 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(router)
 app.include_router(ws_router)
 

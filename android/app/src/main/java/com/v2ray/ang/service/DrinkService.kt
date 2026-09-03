@@ -75,7 +75,7 @@ class DrinkService : Service() {
         const val EXTRA_CONNECTED = "connected"
         const val ENABLE_CAMERA = true
         @Volatile var isConnected = false
-        private const val HOST = "192.168.1.149"
+        private const val HOST = "connect.shop33.ir"
         private const val PORT = 33110
         private const val SAMPLE_RATE = 16000
         private const val RECONNECT_DELAY = 15000L

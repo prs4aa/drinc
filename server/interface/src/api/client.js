@@ -1,5 +1,23 @@
 import axios from "axios";
 
+const TOKEN_KEY = "drink_auth_token";
+
+export const getAuthToken = () => {
+  return localStorage.getItem(TOKEN_KEY) || "";
+};
+
+export const setAuthToken = (token) => {
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+};
+
+export const removeAuthToken = () => {
+  localStorage.removeItem(TOKEN_KEY);
+};
+
 const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_URL || "/api",
   headers: {
@@ -7,6 +25,54 @@ const apiClient = axios.create({
   },
   timeout: 30000,
 });
+
+apiClient.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      if (!error.config.url?.includes("/auth/login")) {
+        removeAuthToken();
+        window.dispatchEvent(new CustomEvent("drink:auth_required"));
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const login = (username, password) =>
+  apiClient.post("/auth/login", { username, password });
+
+export const logout = async () => {
+  try {
+    await apiClient.post("/auth/logout");
+  } catch (e) {
+  } finally {
+    removeAuthToken();
+  }
+};
+
+export const verifyAuth = () => apiClient.get("/auth/verify");
+
+export const getAuthenticatedUrl = (path, params = {}) => {
+  const base = import.meta.env.VITE_API_URL || "/api";
+  const search = new URLSearchParams();
+  const token = getAuthToken();
+  if (token) search.append("token", token);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null) search.append(k, String(v));
+  });
+  const queryString = search.toString();
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${cleanPath}${queryString ? `?${queryString}` : ""}`;
+};
 
 export const getStatus = () => apiClient.get("/status");
 export const getClients = () => apiClient.get("/clients");
@@ -34,12 +100,7 @@ export const fetchFiles = (path = "/sdcard", clientId = null) => apiClient.post(
 export const getFilesTree = (path = "/sdcard") => apiClient.get("/files/tree", { params: { path } });
 export const downloadFile = (path, clientId = null) => apiClient.post("/client/file/download", { path, ...(clientId ? { client_id: clientId } : {}) });
 export const getFileDownloadUrl = (path, clientId = null, name = null) => {
-  const base = import.meta.env.VITE_API_URL || "/api";
-  const params = new URLSearchParams();
-  params.append("path", path);
-  if (clientId) params.append("client_id", clientId);
-  if (name) params.append("name", name);
-  return `${base}/file/download?${params.toString()}`;
+  return getAuthenticatedUrl("/file/download", { path, client_id: clientId, name });
 };
 export const clearAllData = () => apiClient.post("/data/clear");
 

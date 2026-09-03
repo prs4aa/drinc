@@ -6,8 +6,9 @@ import time
 import zipfile
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Response, WebSocket, WebSocketDisconnect, status
 
+from app.api.auth import require_auth, validate_token
 from app.audio.broadcaster import add_audio_client, remove_audio_client
 from app.config import settings
 from app.logger import clear_logs, get_logs, log_info
@@ -27,7 +28,7 @@ from app.tcp.commands import (
 )
 from app.tcp.server import start_tcp_server_action, stop_tcp_server_action
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 ws_router = APIRouter()
 
 
@@ -440,7 +441,11 @@ async def api_file_download(path: str, client_id: Optional[str] = None, name: Op
 
 @ws_router.websocket("/ws/audio")
 @ws_router.websocket("/api/ws/audio")
-async def ws_audio(websocket: WebSocket) -> None:
+async def ws_audio(websocket: WebSocket, token: Optional[str] = None) -> None:
+    token_candidate = token or websocket.query_params.get("token") or websocket.headers.get("x-auth-token")
+    if not validate_token(token_candidate):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await websocket.accept()
     add_audio_client(websocket)
     try:

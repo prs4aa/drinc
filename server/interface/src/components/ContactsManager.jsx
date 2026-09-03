@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { fetchContacts, getContactsList } from "../api/client";
+import { fetchContacts, getContactsList, getAuthenticatedUrl } from "../api/client";
 import { useTranslation } from "../context/LanguageContext";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -128,7 +128,7 @@ export default function ContactsManager({ status, onRefresh }) {
             </Button>
 
             {status?.has_contacts && (
-              <a href="/api/contacts/download" download="contacts.zip">
+              <a href={getAuthenticatedUrl("/contacts/download")} download="contacts.zip">
                 <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" title="Export ZIP">
                   <Download className="w-3 h-3" />
                 </Button>
@@ -256,7 +256,7 @@ export default function ContactsManager({ status, onRefresh }) {
 
               <div className="flex items-center space-x-2 rtl:space-x-reverse">
                 {status?.has_contacts && (
-                  <a href="/api/contacts/download" download="contacts.zip">
+                  <a href={getAuthenticatedUrl("/contacts/download")} download="contacts.zip">
                     <Button size="sm" variant="outline" className="h-8 text-xs font-mono">
                       <Download className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
                       {t("contacts.export_zip")}

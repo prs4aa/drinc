@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { fetchSms, getLatestSms, getContactsList } from "../api/client";
+import { fetchSms, getLatestSms, getContactsList, getAuthenticatedUrl } from "../api/client";
 import { useTranslation } from "../context/LanguageContext";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -314,7 +314,7 @@ export default function SmsManager({ status, onRefresh }) {
 
           <div className="flex items-center space-x-1.5 rtl:space-x-reverse">
             {messages.length > 0 && (
-              <a href="/api/sms/download" download="sms_messages.json">
+              <a href={getAuthenticatedUrl("/sms/download")} download="sms_messages.json">
                 <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-dim hover:text-main" title="Export JSON">
                   <Download className="w-3.5 h-3.5" />
                 </Button>
@@ -497,7 +497,7 @@ export default function SmsManager({ status, onRefresh }) {
 
               <div className="flex items-center space-x-2 rtl:space-x-reverse">
                 {messages.length > 0 && (
-                  <a href="/api/sms/download" download="sms_messages.json">
+                  <a href={getAuthenticatedUrl("/sms/download")} download="sms_messages.json">
                     <Button size="sm" variant="outline" className="h-8 text-xs font-mono">
                       <Download className="w-3.5 h-3.5 mr-1.5 rtl:mr-0 rtl:ml-1.5" />
                       {t("sms.export_json")}

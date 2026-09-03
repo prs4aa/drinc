@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { listCameras, captureCamera } from "../api/client";
+import { listCameras, captureCamera, getAuthenticatedUrl } from "../api/client";
 import { useTranslation } from "../context/LanguageContext";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -124,7 +124,7 @@ export default function CameraManager({ status, onRefresh }) {
                   VIEW
                 </Button>
                 <a
-                  href={`/api/photo/latest?t=${photoTimestamp}`}
+                  href={getAuthenticatedUrl("/photo/latest", { t: photoTimestamp })}
                   download={`capture_${selectedCam}_${photoTimestamp}.jpg`}
                 >
                   <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] font-mono">
@@ -140,7 +140,7 @@ export default function CameraManager({ status, onRefresh }) {
               className="rounded-xl overflow-hidden border border-border bg-[#05080c] relative cursor-pointer group h-40 flex items-center justify-center"
             >
               <img
-                src={`/api/photo/latest?t=${photoTimestamp}`}
+                src={getAuthenticatedUrl("/photo/latest", { t: photoTimestamp })}
                 alt="Latest capture"
                 className="max-h-40 w-full object-contain mx-auto transition-transform duration-200 group-hover:scale-[1.01]"
               />
@@ -160,14 +160,14 @@ export default function CameraManager({ status, onRefresh }) {
           >
             <div className="relative max-w-4xl max-h-[90vh] bg-surface border border-border rounded-2xl overflow-hidden p-2">
               <img
-                src={`/api/photo/latest?t=${photoTimestamp}`}
+                src={getAuthenticatedUrl("/photo/latest", { t: photoTimestamp })}
                 alt="Full resolution capture"
                 className="max-w-full max-h-[80vh] object-contain mx-auto rounded-lg"
               />
               <div className="p-2 flex items-center justify-between text-xs font-mono text-dim">
                 <span>Capture: Cam {selectedCam}</span>
                 <a
-                  href={`/api/photo/latest?t=${photoTimestamp}`}
+                  href={getAuthenticatedUrl("/photo/latest", { t: photoTimestamp })}
                   download={`capture_${selectedCam}_${photoTimestamp}.jpg`}
                   onClick={(e) => e.stopPropagation()}
                 >

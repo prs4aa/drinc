@@ -214,5 +214,23 @@
     "button": "Clear Workspace Data",
     "confirm": "Are you sure you want to clear all data (SMS, contacts, call logs, telemetry, photos, and files)?",
     "cleared": "All data cleared"
+  },
+  "auth": {
+    "title": "SECURITY ACCESS GATEWAY",
+    "subtitle": "SECURE COMMAND & CONTROL AUTHENTICATION",
+    "username": "OPERATOR ID",
+    "username_placeholder": "Enter username (e.g. admin)",
+    "password": "ACCESS KEY",
+    "password_placeholder": "Enter password",
+    "login_button": "AUTHENTICATE",
+    "authenticating": "VERIFYING CREDENTIALS...",
+    "invalid_credentials": "Authentication failed. Invalid Operator ID or Access Key.",
+    "rate_limited": "Access temporarily locked due to excessive failed attempts. Try again in 5 minutes.",
+    "network_error": "Cannot connect to gateway server.",
+    "logout": "LOGOUT",
+    "logged_in_as": "OPERATOR",
+    "security_note": "RESTRICTED ACCESS • ALL SESSIONS MONITORED & ENCRYPTED",
+    "show_password": "Show password",
+    "hide_password": "Hide password"
   }
 }

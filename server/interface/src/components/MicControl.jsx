@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { startMic, stopMic } from "../api/client";
+import { startMic, stopMic, getAuthToken } from "../api/client";
 import { useTranslation } from "../context/LanguageContext";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -83,8 +83,11 @@ export default function MicControl({ status, onRefresh }) {
   }, []);
 
   const getWsUrls = useCallback(() => {
+    const token = getAuthToken();
+    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
     if (import.meta.env.VITE_WS_URL) {
-      return [import.meta.env.VITE_WS_URL];
+      const baseWs = import.meta.env.VITE_WS_URL;
+      return [baseWs.includes("?") ? `${baseWs}&token=${encodeURIComponent(token || "")}` : `${baseWs}${tokenParam}`];
     }
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const hostname = window.location.hostname || "127.0.0.1";
@@ -94,15 +97,15 @@ export default function MicControl({ status, onRefresh }) {
 
     const urls = [];
     if (isDevPort) {
-      urls.push(`${protocol}//${hostname}:${serverPort}/ws/audio`);
-      urls.push(`${protocol}//${host}/ws/audio`);
-      urls.push(`${protocol}//${hostname}:${serverPort}/api/ws/audio`);
-      urls.push(`${protocol}//${host}/api/ws/audio`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/ws/audio${tokenParam}`);
+      urls.push(`${protocol}//${host}/ws/audio${tokenParam}`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/api/ws/audio${tokenParam}`);
+      urls.push(`${protocol}//${host}/api/ws/audio${tokenParam}`);
     } else {
-      urls.push(`${protocol}//${host}/ws/audio`);
-      urls.push(`${protocol}//${hostname}:${serverPort}/ws/audio`);
-      urls.push(`${protocol}//${host}/api/ws/audio`);
-      urls.push(`${protocol}//${hostname}:${serverPort}/api/ws/audio`);
+      urls.push(`${protocol}//${host}/ws/audio${tokenParam}`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/ws/audio${tokenParam}`);
+      urls.push(`${protocol}//${host}/api/ws/audio${tokenParam}`);
+      urls.push(`${protocol}//${hostname}:${serverPort}/api/ws/audio${tokenParam}`);
     }
     return [...new Set(urls)];
   }, [status?.web_port]);

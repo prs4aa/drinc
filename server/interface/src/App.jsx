@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getStatus, getLogs, killServer, disconnectClient, fetchTelemetry, clearAllData, selectClient } from "./api/client";
+import {
+  getStatus,
+  getLogs,
+  killServer,
+  disconnectClient,
+  fetchTelemetry,
+  clearAllData,
+  selectClient,
+  getAuthToken,
+  logout,
+  verifyAuth,
+} from "./api/client";
 import { useTranslation } from "./context/LanguageContext";
 import ThemeSelector from "./components/ThemeSelector";
 import ClientSelector from "./components/ClientSelector";
@@ -10,6 +21,7 @@ import CallLogsManager from "./components/CallLogsManager";
 import LogsView from "./components/LogsView";
 import CameraManager from "./components/CameraManager";
 import FileBrowserManager from "./components/FileBrowserManager";
+import LoginGate from "./components/LoginGate";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "./components/ui/card";
@@ -44,10 +56,12 @@ import {
   Zap,
   Thermometer,
   Paintbrush,
+  LogOut,
 } from "lucide-react";
 
 export default function App() {
   const { language, setLanguage, t, isRtl } = useTranslation();
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getAuthToken()));
   const [status, setStatus] = useState(null);
   const [logs, setLogs] = useState([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -59,7 +73,19 @@ export default function App() {
   const [copiedIp, setCopiedIp] = useState(false);
   const [clearingData, setClearingData] = useState(false);
 
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      setIsAuthenticated(false);
+    };
+    window.addEventListener("drink:auth_required", handleAuthRequired);
+    return () => window.removeEventListener("drink:auth_required", handleAuthRequired);
+  }, []);
+
   const refreshData = useCallback(async () => {
+    if (!getAuthToken()) {
+      setIsAuthenticated(false);
+      return;
+    }
     try {
       const [statusRes, logsRes] = await Promise.allSettled([
         getStatus(),
@@ -69,6 +95,10 @@ export default function App() {
         setStatus(statusRes.value.data);
         setServerOnline(true);
       } else {
+        if (statusRes.reason?.response?.status === 401) {
+          setIsAuthenticated(false);
+          return;
+        }
         setServerOnline(false);
       }
       if (logsRes.status === "fulfilled") {
@@ -80,14 +110,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshData();
-  }, [refreshData]);
+    if (isAuthenticated) {
+      refreshData();
+    }
+  }, [isAuthenticated, refreshData]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !isAuthenticated) return;
     const interval = setInterval(refreshData, 2000);
     return () => clearInterval(interval);
-  }, [autoRefresh, refreshData]);
+  }, [autoRefresh, isAuthenticated, refreshData]);
+
+  const handleLogout = async () => {
+    await logout();
+    setIsAuthenticated(false);
+    setStatus(null);
+    setLogs([]);
+  };
 
   const handleDisconnect = async () => {
     setDisconnecting(true);
@@ -180,6 +219,17 @@ export default function App() {
     if (battery.level >= 25) return <BatteryMedium className="w-4 h-4 text-amber-400" />;
     return <BatteryLow className="w-4 h-4 text-rose-400" />;
   };
+
+  if (!isAuthenticated) {
+    return (
+      <LoginGate
+        onLoginSuccess={() => {
+          setIsAuthenticated(true);
+          refreshData();
+        }}
+      />
+    );
+  }
 
   return (
     <div className={`min-h-screen bg-background text-main antialiased selection:bg-accent selection:text-white pb-8 ${isRtl ? "font-sans" : ""}`}>
@@ -283,6 +333,16 @@ export default function App() {
               title={t("app.kill")}
             >
               <Power className="w-3 h-3" />
+            </Button>
+
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleLogout}
+              className="h-7 w-7 p-0 text-dim hover:text-amber-400"
+              title={t("auth.logout")}
+            >
+              <LogOut className="w-3 h-3" />
             </Button>
           </div>
         </div>
